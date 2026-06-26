@@ -28,7 +28,7 @@ export default function LandingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col max-w-[430px] mx-auto">
+    <div className="min-h-screen bg-slate-50 flex flex-col w-full max-w-screen-xl mx-auto">
 
       {/* Navbar */}
       <nav className="sticky top-0 z-10 flex items-center justify-between px-5 py-4 bg-white/80 backdrop-blur-md border-b border-slate-100">
@@ -50,9 +50,12 @@ export default function LandingPage() {
               </button>
             </>
           ) : (
-            <>
-
-            </>
+            <button
+              onClick={() => navigate('/auth')}
+              className="px-4 py-2 rounded-full bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-500 transition-colors"
+            >
+              Sign In
+            </button>
           )}
         </div>
       </nav>

@@ -89,7 +89,7 @@ export default function OnboardingWizard({ onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-sm px-0">
-      <div className="w-full max-w-[430px] bg-white rounded-t-[28px] pb-10 max-h-[92vh] overflow-y-auto no-scrollbar">
+      <div className="w-full max-w-screen-md bg-white rounded-t-[28px] pb-10 max-h-[92vh] overflow-y-auto no-scrollbar">
 
         {/* Handle */}
         <div className="flex justify-center pt-3 pb-1">

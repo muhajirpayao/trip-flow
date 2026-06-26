@@ -118,7 +118,7 @@ export default function Itinerary() {
   const day = days[activeDay];
 
   return (
-    <div className="pb-24">
+    <div className="min-h-screen pb-24 w-full">
       {/* Header */}
       <div className="px-6 pt-6 pb-4">
         <h1 className="text-2xl font-black text-slate-900 mb-1">Itinerary</h1>
@@ -213,7 +213,7 @@ export default function Itinerary() {
       {/* Add Activity Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm">
-          <div className="w-full max-w-[430px] bg-white rounded-t-3xl p-6 pb-8 max-h-[85vh] overflow-y-auto">
+          <div className="w-full max-w-screen-md bg-white rounded-t-3xl p-6 pb-8 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-lg font-black text-slate-900">Add Activity</h2>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>

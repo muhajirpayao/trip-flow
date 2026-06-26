@@ -63,7 +63,7 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center px-6 max-w-[430px] mx-auto">
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center px-4 sm:px-6 w-full max-w-screen-md mx-auto">
 
       {/* Back to landing */}
       <button

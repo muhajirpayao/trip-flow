@@ -11,13 +11,13 @@ const NAV_ITEMS = [
 
 export default function DashboardLayout() {
   return (
-    <div className="flex flex-col min-h-screen max-w-[430px] mx-auto bg-slate-50">
+    <div className="flex flex-col min-h-screen w-full bg-slate-50">
       <main className="flex-1 pb-20 overflow-y-auto no-scrollbar">
         <Outlet />
       </main>
 
       {/* Bottom navigation */}
-      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] h-16 bg-white border-t border-slate-100 flex items-center z-30 px-2">
+      <nav className="fixed bottom-0 left-0 right-0 w-full h-16 bg-white border-t border-slate-100 flex items-center z-30 px-2">
         {NAV_ITEMS.map(({ to, icon: Icon, label, end }) => (
           <NavLink key={to} to={to} end={end}
             className={({ isActive }) =>

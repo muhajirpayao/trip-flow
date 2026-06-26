@@ -2,10 +2,11 @@
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
 import DashboardLayout from '../layouts/DashboardLayout';
+import LandingPage from '../pages/LandingPage';
 import { useAuth } from '../context/AuthContext';
 
 const AuthPage  = lazy(() => import('../pages/AuthPage'));
-const Home      = lazy(() => import('../pages/Home'));     
+const Home      = lazy(() => import('../pages/Home'));
 const Dashboard = lazy(() => import('../pages/Dashboard'));
 const Itinerary = lazy(() => import('../pages/Itinerary'));
 const Expenses  = lazy(() => import('../pages/Expenses'));
@@ -36,9 +37,8 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
 const router = createBrowserRouter([
   {
-    // "/" now redirects: authed → /dashboard, guest → /auth
     path: '/',
-    element: <Navigate to="/dashboard" replace />,
+    element: <LandingPage />,
   },
   {
     path: '/auth',
@@ -65,7 +65,7 @@ const router = createBrowserRouter([
       { path: 'settings',  element: <Settings /> },
     ],
   },
-  { path: '*', element: <Navigate to="/dashboard" replace /> },
+  { path: '*', element: <Navigate to="/" replace /> },
 ]);
 
 export default function AppRouter() {
