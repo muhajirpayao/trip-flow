@@ -8,6 +8,7 @@ interface TripContextValue {
   trip: Trip | null;
   allTrips: Trip[];
   saveTrip: (t: Trip) => Promise<boolean>;
+  updateTrip: (fields: Partial<Omit<Trip, 'id' | 'createdAt'>>) => Promise<boolean>;
   clearTrip: () => void;
   deleteTrip: (tripId?: string) => Promise<boolean>;
   loadingTrips: boolean;
@@ -54,11 +55,10 @@ export function TripProvider({ children }: { children: ReactNode }) {
   const saveTrip = async (t: Trip) => {
     if (!user) return false;
 
-    // Sanitize strings to remove lone Unicode surrogates that break JSON serialization
     const sanitize = (s: string) =>
       s.replace(/[\uD800-\uDFFF]/g, (c) => {
         const code = c.charCodeAt(0);
-        return (code >= 0xD800 && code <= 0xDBFF) ? '' : c; // strip lone surrogates
+        return (code >= 0xD800 && code <= 0xDBFF) ? '' : c;
       });
 
     const row = {
@@ -90,10 +90,14 @@ export function TripProvider({ children }: { children: ReactNode }) {
     return true;
   };
 
+  // Updates fields on the currently active trip and persists to Supabase.
+  const updateTrip = async (fields: Partial<Omit<Trip, 'id' | 'createdAt'>>) => {
+    if (!trip) return false;
+    return saveTrip({ ...trip, ...fields });
+  };
+
   const clearTrip = () => setTrip(null);
 
-  // Deletes a trip from Supabase (defaults to the current active trip)
-  // and clears it locally so the UI falls back to the "no trip" / onboarding state.
   const deleteTrip = async (tripId?: string) => {
     const targetId = tripId ?? trip?.id;
     if (!targetId || !user) return false;
@@ -115,7 +119,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <TripContext.Provider value={{ trip, allTrips, saveTrip, clearTrip, deleteTrip, loadingTrips }}>
+    <TripContext.Provider value={{ trip, allTrips, saveTrip, updateTrip, clearTrip, deleteTrip, loadingTrips }}>
       {children}
     </TripContext.Provider>
   );
