@@ -1,4 +1,3 @@
-// src/context/TripContext.tsx
 import { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { supabase } from '../lib/supabase';
@@ -10,6 +9,7 @@ interface TripContextValue {
   allTrips: Trip[];
   saveTrip: (t: Trip) => Promise<boolean>;
   clearTrip: () => void;
+  deleteTrip: (tripId?: string) => Promise<boolean>;
   loadingTrips: boolean;
 }
 
@@ -73,14 +73,9 @@ export function TripProvider({ children }: { children: ReactNode }) {
       created_at: t.createdAt,
     };
 
-    console.log('saveTrip: user.id=', user.id, 'payload=', row);
-
-    // Use insert + onConflict instead of upsert to avoid PGRST102
     const res = await supabase
       .from('trips')
       .upsert(row, { onConflict: 'id', ignoreDuplicates: false });
-
-    console.log('saveTrip result', res);
 
     if (res.error) {
       console.error('saveTrip error', res.error);
@@ -97,8 +92,30 @@ export function TripProvider({ children }: { children: ReactNode }) {
 
   const clearTrip = () => setTrip(null);
 
+  // Deletes a trip from Supabase (defaults to the current active trip)
+  // and clears it locally so the UI falls back to the "no trip" / onboarding state.
+  const deleteTrip = async (tripId?: string) => {
+    const targetId = tripId ?? trip?.id;
+    if (!targetId || !user) return false;
+
+    const { error } = await supabase
+      .from('trips')
+      .delete()
+      .eq('id', targetId)
+      .eq('user_id', user.id);
+
+    if (error) {
+      console.error('deleteTrip error', error);
+      return false;
+    }
+
+    setAllTrips(prev => prev.filter(t => t.id !== targetId));
+    if (trip?.id === targetId) setTrip(null);
+    return true;
+  };
+
   return (
-    <TripContext.Provider value={{ trip, allTrips, saveTrip, clearTrip, loadingTrips }}>
+    <TripContext.Provider value={{ trip, allTrips, saveTrip, clearTrip, deleteTrip, loadingTrips }}>
       {children}
     </TripContext.Provider>
   );

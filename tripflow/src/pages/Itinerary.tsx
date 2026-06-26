@@ -1,9 +1,7 @@
 // src/pages/Itinerary.tsx  (Supabase version)
-// ------------------------------------------------------------------
-// Drops localStorage calls and uses itineraryService for persistence.
-// ------------------------------------------------------------------
 
 import { useState, useMemo, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useTrip } from '../context/TripContext';
 import { tripDays, fmtDate } from '../utils';
 import { loadItinerary, saveItinerary } from '../lib/itineraryService';
@@ -11,7 +9,7 @@ import type { ItineraryActivity, ItineraryDay } from '../lib/itineraryService';
 import { Plus, Clock, MapPin, Trash2, X, Calendar as CalendarIcon } from 'lucide-react';
 
 type ActivityType = 'sightseeing' | 'food' | 'transport' | 'lodging' | 'activity' | 'other';
- 
+
 const TYPE_STYLES: Record<ActivityType, { color: string; emoji: string }> = {
   sightseeing: { color: 'bg-indigo-50 text-indigo-600',  emoji: '🗺️' },
   food:        { color: 'bg-amber-50 text-amber-600',    emoji: '🍽️' },
@@ -20,6 +18,9 @@ const TYPE_STYLES: Record<ActivityType, { color: string; emoji: string }> = {
   activity:    { color: 'bg-emerald-50 text-emerald-600',emoji: '🎟️' },
   other:       { color: 'bg-rose-50 text-rose-600',      emoji: '📌' },
 };
+
+const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WEEKDAY_LONG  = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function buildEmptyDays(startDate: string, endDate: string): ItineraryDay[] {
   const days: ItineraryDay[] = [];
@@ -46,7 +47,6 @@ export default function Itinerary() {
     time: '09:00', title: '', location: '', type: 'sightseeing' as ActivityType, notes: '',
   });
 
-  // Load from Supabase on mount, fall back to empty days
   useEffect(() => {
     if (!trip) { setDbLoading(false); return; }
     loadItinerary(trip.id).then((remote: ItineraryDay[] | null) => {
@@ -81,7 +81,7 @@ export default function Itinerary() {
 
   const persist = (next: ItineraryDay[]) => {
     setDays(next);
-    saveItinerary(trip.id, next); // fire-and-forget; localStorage also removed
+    saveItinerary(trip.id, next); // fire-and-forget
   };
 
   const openAddModal = () => {
@@ -116,31 +116,34 @@ export default function Itinerary() {
   };
 
   const day = days[activeDay];
+  const dayWeekday = day ? WEEKDAY_LONG[new Date(day.date).getDay()] : '';
 
   return (
-    <div className="min-h-screen pb-24 w-full">
+    <div className="min-h-screen pb-24 w-full overflow-x-hidden">
       {/* Header */}
-      <div className="px-6 pt-6 pb-4">
+      <div className="px-4 sm:px-6 pt-6 pb-4">
         <h1 className="text-2xl font-black text-slate-900 mb-1">Itinerary</h1>
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-slate-500 truncate">
           {trip.destination} · {totalActivities} {totalActivities === 1 ? 'activity' : 'activities'} planned
         </p>
       </div>
 
       {/* Day selector */}
-      <div className="px-6 mb-5">
+      <div className="px-4 sm:px-6 mb-5">
         <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
           {days.map((d, i) => {
             const dateObj = new Date(d.date);
             const isActive = i === activeDay;
             return (
               <button key={d.date} onClick={() => setActiveDay(i)}
-                className={`flex-shrink-0 flex flex-col items-center justify-center w-16 py-2.5 rounded-2xl border transition-all ${
-                  isActive ? 'gradient-primary text-white border-transparent shadow-hero'
+                className={`flex-shrink-0 flex flex-col items-center justify-center w-[60px] sm:w-16 py-2.5 rounded-2xl border transition-all duration-200 ${
+                  isActive ? 'gradient-primary text-white border-transparent shadow-hero scale-[1.03]'
                            : 'bg-white text-slate-600 border-slate-100 shadow-card'}`}>
-                <span className={`text-[10px] font-semibold uppercase ${isActive ? 'text-indigo-100' : 'text-slate-400'}`}>Day {i+1}</span>
+                <span className={`text-[9px] font-bold uppercase ${isActive ? 'text-indigo-100' : 'text-slate-400'}`}>
+                  {WEEKDAY_SHORT[dateObj.getDay()]}
+                </span>
                 <span className="text-sm font-black mt-0.5">{dateObj.getDate()}</span>
-                <span className={`text-[10px] font-medium ${isActive ? 'text-indigo-100' : 'text-slate-400'}`}>
+                <span className={`text-[9px] font-medium ${isActive ? 'text-indigo-100' : 'text-slate-400'}`}>
                   {dateObj.toLocaleDateString(undefined, { month: 'short' })}
                 </span>
               </button>
@@ -150,14 +153,16 @@ export default function Itinerary() {
       </div>
 
       {/* Day timeline */}
-      <div className="px-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2 text-slate-700">
-            <CalendarIcon size={15} className="text-indigo-500" />
-            <span className="text-sm font-bold">{day ? fmtDate(day.date) : ''}</span>
+      <div className="px-4 sm:px-6">
+        <div className="flex items-center justify-between mb-4 gap-2">
+          <div className="flex items-center gap-2 text-slate-700 min-w-0">
+            <CalendarIcon size={15} className="text-indigo-500 flex-shrink-0" />
+            <span className="text-sm font-bold truncate">
+              Day {activeDay + 1} · {dayWeekday}{day ? `, ${fmtDate(day.date)}` : ''}
+            </span>
           </div>
           <button onClick={openAddModal}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-full gradient-primary text-white text-xs font-bold shadow-hero active:scale-95 transition-transform">
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-full gradient-primary text-white text-xs font-bold shadow-hero active:scale-95 transition-transform flex-shrink-0">
             <Plus size={14} /> Add
           </button>
         </div>
@@ -172,95 +177,115 @@ export default function Itinerary() {
           <div className="relative pl-5">
             <div className="absolute left-[7px] top-2 bottom-2 w-px bg-slate-200" />
             <div className="space-y-3">
-              {day?.activities.map((activity: ItineraryActivity) => {
-                const style = TYPE_STYLES[activity.type as ActivityType];
-                return (
-                  <div key={activity.id} className="relative">
-                    <div className="absolute -left-5 top-4 w-3.5 h-3.5 rounded-full bg-white border-2 border-indigo-400" />
-                    <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-card">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-3 min-w-0">
-                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-base flex-shrink-0 ${style.color}`}>
-                            {style.emoji}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 mb-0.5">
-                              <Clock size={11} /> {activity.time}
+              <AnimatePresence initial={false}>
+                {day?.activities.map((activity: ItineraryActivity) => {
+                  const style = TYPE_STYLES[activity.type as ActivityType];
+                  return (
+                    <motion.div
+                      key={activity.id}
+                      className="relative"
+                      initial={{ opacity: 0, x: -12 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <div className="absolute -left-5 top-4 w-3.5 h-3.5 rounded-full bg-white border-2 border-indigo-400" />
+                      <div className="bg-white rounded-2xl p-3.5 sm:p-4 border border-slate-100 shadow-card">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start gap-3 min-w-0">
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-base flex-shrink-0 ${style.color}`}>
+                              {style.emoji}
                             </div>
-                            <h3 className="text-sm font-bold text-slate-900 truncate">{activity.title}</h3>
-                            {activity.location && (
-                              <div className="flex items-center gap-1 text-xs text-slate-500 mt-0.5">
-                                <MapPin size={11} /><span className="truncate">{activity.location}</span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 mb-0.5">
+                                <Clock size={11} /> {activity.time}
                               </div>
-                            )}
-                            {activity.notes && <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">{activity.notes}</p>}
+                              <h3 className="text-sm font-bold text-slate-900 truncate">{activity.title}</h3>
+                              {activity.location && (
+                                <div className="flex items-center gap-1 text-xs text-slate-500 mt-0.5">
+                                  <MapPin size={11} className="flex-shrink-0" /><span className="truncate">{activity.location}</span>
+                                </div>
+                              )}
+                              {activity.notes && <p className="text-xs text-slate-400 mt-1.5 leading-relaxed break-words">{activity.notes}</p>}
+                            </div>
                           </div>
+                          <button onClick={() => handleDeleteActivity(activeDay, activity.id)}
+                            className="text-slate-300 hover:text-rose-500 transition-colors flex-shrink-0">
+                            <Trash2 size={15} />
+                          </button>
                         </div>
-                        <button onClick={() => handleDeleteActivity(activeDay, activity.id)}
-                          className="text-slate-300 hover:text-rose-500 transition-colors flex-shrink-0">
-                          <Trash2 size={15} />
-                        </button>
                       </div>
-                    </div>
-                  </div>
-                );
-              })}
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
             </div>
           </div>
         )}
       </div>
 
       {/* Add Activity Modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm">
-          <div className="w-full max-w-screen-md bg-white rounded-t-3xl p-6 pb-8 max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-black text-slate-900">Add Activity</h2>
-              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs font-bold text-slate-500 mb-1.5 block">Title</label>
-                <input autoFocus value={form.title} onChange={e => setForm({ ...form, title: e.target.value })}
-                  placeholder="e.g. Visit the Louvre"
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400" />
+      <AnimatePresence>
+        {showModal && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setShowModal(false)}
+          >
+            <motion.div
+              className="w-full max-w-screen-md bg-white rounded-t-3xl p-5 sm:p-6 pb-8 max-h-[88vh] overflow-y-auto"
+              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-lg font-black text-slate-900">Add Activity</h2>
+                <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
               </div>
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="text-xs font-bold text-slate-500 mb-1.5 block">Time</label>
-                  <input type="time" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })}
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-500 mb-1.5 block">Title</label>
+                  <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })}
+                    placeholder="e.g. Visit the Louvre"
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400" />
                 </div>
-                <div className="flex-1">
-                  <label className="text-xs font-bold text-slate-500 mb-1.5 block">Type</label>
-                  <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value as ActivityType })}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400 bg-white">
-                    {Object.keys(TYPE_STYLES).map(t => (
-                      <option key={t} value={t}>{TYPE_STYLES[t as ActivityType].emoji} {t.charAt(0).toUpperCase() + t.slice(1)}</option>
-                    ))}
-                  </select>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="flex-1">
+                    <label className="text-xs font-bold text-slate-500 mb-1.5 block">Time</label>
+                    <input type="time" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400" />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-xs font-bold text-slate-500 mb-1.5 block">Type</label>
+                    <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value as ActivityType })}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400 bg-white">
+                      {Object.keys(TYPE_STYLES).map(t => (
+                        <option key={t} value={t}>{TYPE_STYLES[t as ActivityType].emoji} {t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 mb-1.5 block">Location (optional)</label>
+                  <input value={form.location} onChange={e => setForm({ ...form, location: e.target.value })}
+                    placeholder="e.g. Rue de Rivoli, Paris"
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 mb-1.5 block">Notes (optional)</label>
+                  <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
+                    placeholder="Booking ref, tips, etc." rows={2}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400 resize-none" />
+                </div>
+                <button onClick={handleAddActivity} disabled={!form.title.trim()}
+                  className="w-full py-3.5 rounded-full gradient-primary text-white font-bold text-sm shadow-hero disabled:opacity-40 transition-opacity mt-2 active:scale-95">
+                  Add to Day {activeDay + 1}
+                </button>
               </div>
-              <div>
-                <label className="text-xs font-bold text-slate-500 mb-1.5 block">Location (optional)</label>
-                <input value={form.location} onChange={e => setForm({ ...form, location: e.target.value })}
-                  placeholder="e.g. Rue de Rivoli, Paris"
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400" />
-              </div>
-              <div>
-                <label className="text-xs font-bold text-slate-500 mb-1.5 block">Notes (optional)</label>
-                <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
-                  placeholder="Booking ref, tips, etc." rows={2}
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400 resize-none" />
-              </div>
-              <button onClick={handleAddActivity} disabled={!form.title.trim()}
-                className="w-full py-3.5 rounded-full gradient-primary text-white font-bold text-sm shadow-hero disabled:opacity-40 transition-opacity mt-2">
-                Add to Day {activeDay + 1}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
