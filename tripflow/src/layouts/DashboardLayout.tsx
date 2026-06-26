@@ -52,11 +52,11 @@ export default function DashboardLayout() {
       </main>
 
       {/* Bottom navigation */}
-      <nav
-        className={`fixed bottom-0 left-0 right-0 w-full h-14 bg-white border-t border-slate-100 flex items-center z-30 px-2 transition-transform duration-300 ease-in-out ${
-          hidden ? 'translate-y-full' : 'translate-y-0'
-        }`}
-      >
+<nav
+  className={`fixed bottom-4 left-4 right-4 h-14 bg-white rounded-full shadow-lg shadow-slate-200/60 border border-slate-100 flex items-center z-30 px-2 transition-all duration-300 ease-in-out ${
+    hidden ? 'translate-y-24 opacity-0' : 'translate-y-0 opacity-100'
+  }`}
+>
         {NAV_ITEMS.map(({ to, icon: Icon, label, end }) => (
           <NavLink
             key={to}
