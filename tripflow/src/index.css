@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body { @apply bg-slate-50 text-slate-900 font-sans antialiased; }
+  * { @apply box-border; }
+}
+
+@layer utilities {
+  .gradient-primary { background: linear-gradient(135deg, #6366f1, #8b5cf6); }
+  .gradient-sky { background: linear-gradient(135deg, #0ea5e9, #6366f1); }
+  .text-gradient { background: linear-gradient(135deg,#6366f1,#8b5cf6); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+  .glass { background: rgba(255,255,255,0.7); backdrop-filter: blur(12px); }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+}
