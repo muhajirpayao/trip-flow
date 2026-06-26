@@ -1,3 +1,6 @@
+// src/components/onboarding/OnboardingWizard.tsx
+// Same UI as before. saveTrip() now persists to Supabase via TripContext.
+
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, MapPin, Calendar, Wallet, Users, CheckCircle } from 'lucide-react';
@@ -10,9 +13,9 @@ const STEPS = ['Destination', 'Dates', 'Budget', 'Travel Type', 'Review'];
 const DESTINATIONS = ['🇯🇵 Japan', '🇸🇬 Singapore', '🇭🇰 Hong Kong', '🇮🇹 Italy', '🇹🇭 Thailand', '🇫🇷 France'];
 const CURRENCIES: Currency[] = ['USD', 'EUR', 'GBP', 'JPY', 'SGD', 'AUD', 'CAD', 'HKD'];
 const TRAVEL_TYPES: { value: TravelType; icon: string; label: string }[] = [
-  { value: 'solo', icon: '🧳', label: 'Solo' },
-  { value: 'couple', icon: '💑', label: 'Couple' },
-  { value: 'family', icon: '👨‍👩‍👧', label: 'Family' },
+  { value: 'solo',    icon: '🧳', label: 'Solo' },
+  { value: 'couple',  icon: '💑', label: 'Couple' },
+  { value: 'family',  icon: '👨‍👩‍👧', label: 'Family' },
   { value: 'friends', icon: '👯', label: 'Friends' },
 ];
 
@@ -21,11 +24,12 @@ const EMPTY_FORM: OnboardingForm = { dest: '', startDate: '', endDate: '', budge
 interface Props { onClose: () => void; }
 
 export default function OnboardingWizard({ onClose }: Props) {
-  const [step, setStep] = useState(0);
-  const [form, setForm] = useState<OnboardingForm>(EMPTY_FORM);
+  const [step, setStep]     = useState(0);
+  const [form, setForm]     = useState<OnboardingForm>(EMPTY_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const { saveTrip } = useTrip();
-  const navigate = useNavigate();
+  const [saving, setSaving] = useState(false);
+  const { saveTrip }        = useTrip();
+  const navigate            = useNavigate();
 
   const set = (key: keyof OnboardingForm, val: string) => {
     setForm(f => ({ ...f, [key]: val }));
@@ -37,8 +41,9 @@ export default function OnboardingWizard({ onClose }: Props) {
     if (step === 0 && !form.dest.trim()) e.dest = 'Enter a destination';
     if (step === 1) {
       if (!form.startDate) e.startDate = 'Pick a start date';
-      if (!form.endDate) e.endDate = 'Pick an end date';
-      if (form.startDate && form.endDate && form.endDate <= form.startDate) e.endDate = 'End must be after start';
+      if (!form.endDate)   e.endDate   = 'Pick an end date';
+      if (form.startDate && form.endDate && form.endDate <= form.startDate)
+        e.endDate = 'End must be after start';
     }
     if (step === 2 && (!form.budget || Number(form.budget) <= 0)) e.budget = 'Enter a valid budget';
     if (step === 3 && !form.travelType) e.travelType = 'Choose a travel type';
@@ -49,24 +54,27 @@ export default function OnboardingWizard({ onClose }: Props) {
   const next = () => { if (validate()) setStep(s => s + 1); };
   const back = () => setStep(s => s - 1);
 
-  const create = () => {
+  const create = async () => {
+    setSaving(true);
     const trip: Trip = {
-      id: Date.now().toString(),
+      id:          Date.now().toString(),
       destination: form.dest.trim(),
-      startDate: form.startDate,
-      endDate: form.endDate,
-      budget: Number(form.budget),
-      currency: form.currency,
-      travelType: form.travelType as TravelType,
-      createdAt: new Date().toISOString(),
+      startDate:   form.startDate,
+      endDate:     form.endDate,
+      budget:      Number(form.budget),
+      currency:    form.currency,
+      travelType:  form.travelType as TravelType,
+      createdAt:   new Date().toISOString(),
     };
-    saveTrip(trip);
+    await saveTrip(trip);   // ← persists to Supabase
+    setSaving(false);
     navigate('/dashboard');
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-sm px-0">
       <div className="w-full max-w-[430px] bg-white rounded-t-[28px] pb-10 max-h-[92vh] overflow-y-auto no-scrollbar">
+
         {/* Handle */}
         <div className="flex justify-center pt-3 pb-1">
           <div className="w-10 h-1 rounded-full bg-slate-200" />
@@ -86,12 +94,16 @@ export default function OnboardingWizard({ onClose }: Props) {
         {/* Progress dots */}
         <div className="flex gap-2 px-6 py-4">
           {STEPS.map((_, i) => (
-            <div key={i} className={`h-1.5 rounded-full transition-all duration-300 ${i <= step ? 'gradient-primary' : 'bg-slate-100'} ${i === step ? 'flex-[2]' : 'flex-1'}`} />
+            <div key={i}
+              className={`h-1.5 rounded-full transition-all duration-300 ${i <= step ? 'gradient-primary' : 'bg-slate-100'} ${i === step ? 'flex-[2]' : 'flex-1'}`}
+            />
           ))}
         </div>
 
         {/* Step content */}
         <div className="px-6 pb-4">
+
+          {/* Step 0: Destination */}
           {step === 0 && (
             <div>
               <div className="flex items-center gap-2 mb-1">
@@ -119,6 +131,7 @@ export default function OnboardingWizard({ onClose }: Props) {
             </div>
           )}
 
+          {/* Step 1: Dates */}
           {step === 1 && (
             <div>
               <div className="flex items-center gap-2 mb-1">
@@ -128,7 +141,9 @@ export default function OnboardingWizard({ onClose }: Props) {
               <p className="text-sm text-slate-500 mb-5">Set your departure and return dates.</p>
               {(['startDate', 'endDate'] as const).map((key, i) => (
                 <div key={key} className="mb-4">
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">{i === 0 ? 'Start Date' : 'End Date'}</label>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                    {i === 0 ? 'Start Date' : 'End Date'}
+                  </label>
                   <input type="date" value={form[key]} onChange={e => set(key, e.target.value)}
                     className={`w-full px-4 py-3.5 rounded-xl border text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${errors[key] ? 'border-red-400' : 'border-slate-200'}`} />
                   {errors[key] && <p className="text-xs text-red-500 mt-1">{errors[key]}</p>}
@@ -143,6 +158,7 @@ export default function OnboardingWizard({ onClose }: Props) {
             </div>
           )}
 
+          {/* Step 2: Budget */}
           {step === 2 && (
             <div>
               <div className="flex items-center gap-2 mb-1">
@@ -169,6 +185,7 @@ export default function OnboardingWizard({ onClose }: Props) {
             </div>
           )}
 
+          {/* Step 3: Travel type */}
           {step === 3 && (
             <div>
               <div className="flex items-center gap-2 mb-1">
@@ -189,6 +206,7 @@ export default function OnboardingWizard({ onClose }: Props) {
             </div>
           )}
 
+          {/* Step 4: Review */}
           {step === 4 && (
             <div>
               <div className="flex items-center gap-2 mb-1">
@@ -198,14 +216,15 @@ export default function OnboardingWizard({ onClose }: Props) {
               <p className="text-sm text-slate-500 mb-5">Your trip summary looks great.</p>
               <div className="bg-slate-50 rounded-2xl overflow-hidden border border-slate-100">
                 {[
-                  { label: 'Destination', value: form.dest },
-                  { label: 'Start', value: fmtDate(form.startDate) },
-                  { label: 'End', value: fmtDate(form.endDate) },
-                  { label: 'Duration', value: `${tripDays(form.startDate, form.endDate)} days` },
-                  { label: 'Budget', value: `${form.currency} ${Number(form.budget).toLocaleString()}` },
+                  { label: 'Destination',   value: form.dest },
+                  { label: 'Start',         value: fmtDate(form.startDate) },
+                  { label: 'End',           value: fmtDate(form.endDate) },
+                  { label: 'Duration',      value: `${tripDays(form.startDate, form.endDate)} days` },
+                  { label: 'Budget',        value: `${form.currency} ${Number(form.budget).toLocaleString()}` },
                   { label: 'Travelling as', value: form.travelType.charAt(0).toUpperCase() + form.travelType.slice(1) },
                 ].map(({ label, value }, i, arr) => (
-                  <div key={label} className={`flex justify-between items-center px-4 py-3.5 ${i < arr.length - 1 ? 'border-b border-slate-200' : ''}`}>
+                  <div key={label}
+                    className={`flex justify-between items-center px-4 py-3.5 ${i < arr.length - 1 ? 'border-b border-slate-200' : ''}`}>
                     <span className="text-sm text-slate-500">{label}</span>
                     <span className="text-sm font-semibold text-slate-900">{value}</span>
                   </div>
@@ -215,20 +234,23 @@ export default function OnboardingWizard({ onClose }: Props) {
           )}
         </div>
 
-        {/* Footer */}
+        {/* Footer nav */}
         <div className="px-6 flex gap-3 pt-2">
           {step > 0 && (
-            <button onClick={back} className="flex-1 py-4 rounded-full bg-slate-100 text-slate-700 font-semibold text-sm hover:bg-slate-200 transition-colors">
+            <button onClick={back}
+              className="flex-1 py-4 rounded-full bg-slate-100 text-slate-700 font-semibold text-sm hover:bg-slate-200 transition-colors">
               Back
             </button>
           )}
           {step < STEPS.length - 1 ? (
-            <button onClick={next} className="flex-[2] py-4 rounded-full gradient-primary text-white font-bold text-sm shadow-hero hover:opacity-90 transition-opacity">
+            <button onClick={next}
+              className="flex-[2] py-4 rounded-full gradient-primary text-white font-bold text-sm shadow-hero hover:opacity-90 transition-opacity">
               Continue →
             </button>
           ) : (
-            <button onClick={create} className="flex-[2] py-4 rounded-full gradient-primary text-white font-bold text-sm shadow-hero hover:opacity-90 transition-opacity">
-              Create My Trip 🚀
+            <button onClick={create} disabled={saving}
+              className="flex-[2] py-4 rounded-full gradient-primary text-white font-bold text-sm shadow-hero hover:opacity-90 transition-opacity disabled:opacity-50">
+              {saving ? 'Saving…' : 'Create My Trip 🚀'}
             </button>
           )}
         </div>

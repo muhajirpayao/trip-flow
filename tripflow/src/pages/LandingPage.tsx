@@ -1,39 +1,59 @@
-import { useState } from 'react';
+// src/pages/LandingPage.tsx
+// Public landing page. "Get Started" → /auth. "Dashboard" → /dashboard (auth-gated).
+
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { useTrip } from '../context/TripContext';
-import OnboardingWizard from '../components/onboarding/OnboardingWizard';
 import { Calendar, Wallet, CheckSquare, MapPin, Users, Zap } from 'lucide-react';
 
 const FEATURES = [
-  { icon: Calendar, color: 'bg-indigo-50 text-indigo-500', label: 'Smart Itinerary', desc: 'Timeline-based day-by-day scheduling' },
-  { icon: Wallet, color: 'bg-emerald-50 text-emerald-500', label: 'Expense Tracker', desc: 'Stay on budget with smart tracking' },
-  { icon: CheckSquare, color: 'bg-amber-50 text-amber-500', label: 'Packing List', desc: 'Never forget travel essentials' },
-  { icon: MapPin, color: 'bg-rose-50 text-rose-500', label: 'Saved Places', desc: 'All your destinations in one place' },
-  { icon: Users, color: 'bg-sky-50 text-sky-500', label: 'Collaboration', desc: 'Plan trips with friends & family' },
-  { icon: Zap, color: 'bg-violet-50 text-violet-500', label: 'AI Suggestions', desc: 'Smart recommendations for your trip' },
+  { icon: Calendar,    color: 'bg-indigo-50 text-indigo-500',  label: 'Smart Itinerary', desc: 'Timeline-based day-by-day scheduling' },
+  { icon: Wallet,      color: 'bg-emerald-50 text-emerald-500', label: 'Expense Tracker', desc: 'Stay on budget with smart tracking' },
+  { icon: CheckSquare, color: 'bg-amber-50 text-amber-500',    label: 'Packing List',    desc: 'Never forget travel essentials' },
+  { icon: MapPin,      color: 'bg-rose-50 text-rose-500',      label: 'Saved Places',    desc: 'All your destinations in one place' },
+  { icon: Users,       color: 'bg-sky-50 text-sky-500',        label: 'Collaboration',   desc: 'Plan trips with friends & family' },
+  { icon: Zap,         color: 'bg-violet-50 text-violet-500',  label: 'AI Suggestions',  desc: 'Smart recommendations for your trip' },
 ];
 
 export default function LandingPage() {
-  const [showOnboarding, setShowOnboarding] = useState(false);
-  const { trip } = useTrip();
   const navigate = useNavigate();
+  const { isAuthed, signOut } = useAuth();
+  const { trip } = useTrip();
 
+  // Authed + has trip → dashboard. Authed + no trip → dashboard (onboarding wizard opens there).
+  // Not authed → /auth.
   const handleCTA = () => {
-    if (trip) navigate('/dashboard');
-    else setShowOnboarding(true);
+    if (isAuthed) navigate('/dashboard');
+    else navigate('/auth');
   };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col max-w-[430px] mx-auto">
+
       {/* Navbar */}
       <nav className="sticky top-0 z-10 flex items-center justify-between px-5 py-4 bg-white/80 backdrop-blur-md border-b border-slate-100">
         <span className="text-xl font-black text-gradient">TripFlow</span>
         <div className="flex items-center gap-2">
-          <button className="px-4 py-2 text-sm font-semibold text-slate-600 hover:text-indigo-600 transition-colors">Features</button>
-          <button onClick={handleCTA}
-            className="px-4 py-2 rounded-full gradient-primary text-white text-sm font-bold shadow-hero hover:opacity-90 transition-opacity">
-            {trip ? 'Dashboard' : 'Get Started'}
-          </button>
+          {isAuthed ? (
+            <>
+              <button
+                onClick={() => navigate('/dashboard')}
+                className="px-4 py-2 text-sm font-semibold text-slate-600 hover:text-indigo-600 transition-colors"
+              >
+                Dashboard
+              </button>
+              <button
+                onClick={async () => { await signOut(); }}
+                className="px-4 py-2 rounded-full bg-slate-100 text-slate-600 text-sm font-bold hover:bg-slate-200 transition-colors"
+              >
+                Sign Out
+              </button>
+            </>
+          ) : (
+            <>
+
+            </>
+          )}
         </div>
       </nav>
 
@@ -49,13 +69,11 @@ export default function LandingPage() {
           Organize itineraries, track expenses, save memories, and travel stress-free.
         </p>
         <div className="flex gap-3 justify-center flex-wrap">
-          <button onClick={handleCTA}
-            className="px-7 py-3.5 rounded-full gradient-primary text-white font-bold text-base shadow-hero hover:opacity-90 transition-all active:scale-95">
-            {trip ? 'Open Dashboard' : 'Get Started'}
-          </button>
-          <button onClick={() => { navigate('/dashboard'); }}
-            className="px-7 py-3.5 rounded-full bg-white text-indigo-600 font-semibold text-base border-2 border-indigo-100 hover:border-indigo-300 transition-colors">
-            Explore Demo
+          <button
+            onClick={handleCTA}
+            className="px-7 py-3.5 rounded-full gradient-primary text-white font-bold text-base shadow-hero hover:opacity-90 transition-all active:scale-95"
+          >
+            {isAuthed && trip ? 'Open Dashboard' : isAuthed ? 'Plan a Trip' : 'Get Started'}
           </button>
         </div>
 
@@ -105,13 +123,13 @@ export default function LandingPage() {
         <div className="text-2xl mb-2">🚀</div>
         <h3 className="text-lg font-black mb-2">Start planning today</h3>
         <p className="text-sm text-indigo-200 mb-4">Free forever. No credit card needed.</p>
-        <button onClick={handleCTA}
-          className="bg-white text-indigo-600 font-bold px-6 py-3 rounded-full text-sm hover:bg-indigo-50 transition-colors">
-          Create your first trip
+        <button
+          onClick={handleCTA}
+          className="bg-white text-indigo-600 font-bold px-6 py-3 rounded-full text-sm hover:bg-indigo-50 transition-colors"
+        >
+          {isAuthed ? 'Go to Dashboard' : 'Create your first trip'}
         </button>
       </div>
-
-      {showOnboarding && <OnboardingWizard onClose={() => setShowOnboarding(false)} />}
     </div>
   );
 }

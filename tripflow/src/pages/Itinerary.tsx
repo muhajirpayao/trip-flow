@@ -1,55 +1,30 @@
-import { useState, useMemo } from 'react';
+// src/pages/Itinerary.tsx  (Supabase version)
+// ------------------------------------------------------------------
+// Drops localStorage calls and uses itineraryService for persistence.
+// ------------------------------------------------------------------
+
+import { useState, useMemo, useEffect } from 'react';
 import { useTrip } from '../context/TripContext';
 import { tripDays, fmtDate } from '../utils';
+import { loadItinerary, saveItinerary } from '../lib/itineraryService';
+import type { ItineraryActivity, ItineraryDay } from '../lib/itineraryService';
 import { Plus, Clock, MapPin, Trash2, X, Calendar as CalendarIcon } from 'lucide-react';
 
 type ActivityType = 'sightseeing' | 'food' | 'transport' | 'lodging' | 'activity' | 'other';
-
-interface ItineraryActivity {
-  id: string;
-  time: string;
-  title: string;
-  location?: string;
-  type: ActivityType;
-  notes?: string;
-}
-
-interface ItineraryDay {
-  date: string; // ISO date
-  activities: ItineraryActivity[];
-}
-
+ 
 const TYPE_STYLES: Record<ActivityType, { color: string; emoji: string }> = {
-  sightseeing: { color: 'bg-indigo-50 text-indigo-600', emoji: '🗺️' },
-  food: { color: 'bg-amber-50 text-amber-600', emoji: '🍽️' },
-  transport: { color: 'bg-sky-50 text-sky-600', emoji: '🚗' },
-  lodging: { color: 'bg-violet-50 text-violet-600', emoji: '🏨' },
-  activity: { color: 'bg-emerald-50 text-emerald-600', emoji: '🎟️' },
-  other: { color: 'bg-rose-50 text-rose-600', emoji: '📌' },
+  sightseeing: { color: 'bg-indigo-50 text-indigo-600',  emoji: '🗺️' },
+  food:        { color: 'bg-amber-50 text-amber-600',    emoji: '🍽️' },
+  transport:   { color: 'bg-sky-50 text-sky-600',        emoji: '🚗' },
+  lodging:     { color: 'bg-violet-50 text-violet-600',  emoji: '🏨' },
+  activity:    { color: 'bg-emerald-50 text-emerald-600',emoji: '🎟️' },
+  other:       { color: 'bg-rose-50 text-rose-600',      emoji: '📌' },
 };
-
-function loadItinerary(tripId: string): ItineraryDay[] {
-  try {
-    const raw = localStorage.getItem(`tripflow:itinerary:${tripId}`);
-    if (raw) return JSON.parse(raw);
-  } catch {
-    /* ignore */
-  }
-  return [];
-}
-
-function saveItinerary(tripId: string, days: ItineraryDay[]) {
-  try {
-    localStorage.setItem(`tripflow:itinerary:${tripId}`, JSON.stringify(days));
-  } catch {
-    /* ignore */
-  }
-}
 
 function buildEmptyDays(startDate: string, endDate: string): ItineraryDay[] {
   const days: ItineraryDay[] = [];
   const start = new Date(startDate);
-  const end = new Date(endDate);
+  const end   = new Date(endDate);
   const count = Math.max(1, tripDays(startDate, endDate));
   for (let i = 0; i < count; i++) {
     const d = new Date(start);
@@ -63,18 +38,28 @@ function buildEmptyDays(startDate: string, endDate: string): ItineraryDay[] {
 export default function Itinerary() {
   const { trip } = useTrip();
 
-  const [days, setDays] = useState<ItineraryDay[]>(() => {
-    if (!trip) return [];
-    const stored = loadItinerary(trip.id);
-    if (stored.length) return stored;
-    return buildEmptyDays(trip.startDate, trip.endDate);
-  });
-
+  const [days, setDays]           = useState<ItineraryDay[]>([]);
+  const [dbLoading, setDbLoading] = useState(true);
   const [activeDay, setActiveDay] = useState(0);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ time: '09:00', title: '', location: '', type: 'sightseeing' as ActivityType, notes: '' });
+  const [form, setForm] = useState({
+    time: '09:00', title: '', location: '', type: 'sightseeing' as ActivityType, notes: '',
+  });
 
-  const totalActivities = useMemo(() => days.reduce((sum, d) => sum + d.activities.length, 0), [days]);
+  // Load from Supabase on mount, fall back to empty days
+  useEffect(() => {
+    if (!trip) { setDbLoading(false); return; }
+    loadItinerary(trip.id).then((remote: ItineraryDay[] | null) => {
+      if (remote && remote.length) {
+        setDays(remote);
+      } else {
+        setDays(buildEmptyDays(trip.startDate, trip.endDate));
+      }
+      setDbLoading(false);
+    });
+  }, [trip]);
+
+  const totalActivities = useMemo(() => days.reduce((s, d) => s + d.activities.length, 0), [days]);
 
   if (!trip) {
     return (
@@ -86,9 +71,17 @@ export default function Itinerary() {
     );
   }
 
+  if (dbLoading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <div className="w-8 h-8 rounded-full border-4 border-indigo-200 border-t-indigo-600 animate-spin" />
+      </div>
+    );
+  }
+
   const persist = (next: ItineraryDay[]) => {
     setDays(next);
-    saveItinerary(trip.id, next);
+    saveItinerary(trip.id, next); // fire-and-forget; localStorage also removed
   };
 
   const openAddModal = () => {
@@ -99,12 +92,12 @@ export default function Itinerary() {
   const handleAddActivity = () => {
     if (!form.title.trim()) return;
     const newActivity: ItineraryActivity = {
-      id: crypto.randomUUID(),
-      time: form.time,
-      title: form.title.trim(),
+      id:       crypto.randomUUID(),
+      time:     form.time,
+      title:    form.title.trim(),
       location: form.location.trim() || undefined,
-      type: form.type,
-      notes: form.notes.trim() || undefined,
+      type:     form.type,
+      notes:    form.notes.trim() || undefined,
     };
     const next = days.map((d, i) =>
       i === activeDay
@@ -117,7 +110,7 @@ export default function Itinerary() {
 
   const handleDeleteActivity = (dayIdx: number, activityId: string) => {
     const next = days.map((d, i) =>
-      i === dayIdx ? { ...d, activities: d.activities.filter((a) => a.id !== activityId) } : d
+      i === dayIdx ? { ...d, activities: d.activities.filter((a: ItineraryActivity) => a.id !== activityId) } : d
     );
     persist(next);
   };
@@ -141,18 +134,11 @@ export default function Itinerary() {
             const dateObj = new Date(d.date);
             const isActive = i === activeDay;
             return (
-              <button
-                key={d.date}
-                onClick={() => setActiveDay(i)}
+              <button key={d.date} onClick={() => setActiveDay(i)}
                 className={`flex-shrink-0 flex flex-col items-center justify-center w-16 py-2.5 rounded-2xl border transition-all ${
-                  isActive
-                    ? 'gradient-primary text-white border-transparent shadow-hero'
-                    : 'bg-white text-slate-600 border-slate-100 shadow-card'
-                }`}
-              >
-                <span className={`text-[10px] font-semibold uppercase ${isActive ? 'text-indigo-100' : 'text-slate-400'}`}>
-                  Day {i + 1}
-                </span>
+                  isActive ? 'gradient-primary text-white border-transparent shadow-hero'
+                           : 'bg-white text-slate-600 border-slate-100 shadow-card'}`}>
+                <span className={`text-[10px] font-semibold uppercase ${isActive ? 'text-indigo-100' : 'text-slate-400'}`}>Day {i+1}</span>
                 <span className="text-sm font-black mt-0.5">{dateObj.getDate()}</span>
                 <span className={`text-[10px] font-medium ${isActive ? 'text-indigo-100' : 'text-slate-400'}`}>
                   {dateObj.toLocaleDateString(undefined, { month: 'short' })}
@@ -170,10 +156,8 @@ export default function Itinerary() {
             <CalendarIcon size={15} className="text-indigo-500" />
             <span className="text-sm font-bold">{day ? fmtDate(day.date) : ''}</span>
           </div>
-          <button
-            onClick={openAddModal}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-full gradient-primary text-white text-xs font-bold shadow-hero active:scale-95 transition-transform"
-          >
+          <button onClick={openAddModal}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-full gradient-primary text-white text-xs font-bold shadow-hero active:scale-95 transition-transform">
             <Plus size={14} /> Add
           </button>
         </div>
@@ -188,8 +172,8 @@ export default function Itinerary() {
           <div className="relative pl-5">
             <div className="absolute left-[7px] top-2 bottom-2 w-px bg-slate-200" />
             <div className="space-y-3">
-              {day?.activities.map((activity) => {
-                const style = TYPE_STYLES[activity.type];
+              {day?.activities.map((activity: ItineraryActivity) => {
+                const style = TYPE_STYLES[activity.type as ActivityType];
                 return (
                   <div key={activity.id} className="relative">
                     <div className="absolute -left-5 top-4 w-3.5 h-3.5 rounded-full bg-white border-2 border-indigo-400" />
@@ -206,18 +190,14 @@ export default function Itinerary() {
                             <h3 className="text-sm font-bold text-slate-900 truncate">{activity.title}</h3>
                             {activity.location && (
                               <div className="flex items-center gap-1 text-xs text-slate-500 mt-0.5">
-                                <MapPin size={11} /> <span className="truncate">{activity.location}</span>
+                                <MapPin size={11} /><span className="truncate">{activity.location}</span>
                               </div>
                             )}
-                            {activity.notes && (
-                              <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">{activity.notes}</p>
-                            )}
+                            {activity.notes && <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">{activity.notes}</p>}
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleDeleteActivity(activeDay, activity.id)}
-                          className="text-slate-300 hover:text-rose-500 transition-colors flex-shrink-0"
-                        >
+                        <button onClick={() => handleDeleteActivity(activeDay, activity.id)}
+                          className="text-slate-300 hover:text-rose-500 transition-colors flex-shrink-0">
                           <Trash2 size={15} />
                         </button>
                       </div>
@@ -233,78 +213,48 @@ export default function Itinerary() {
       {/* Add Activity Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm">
-          <div className="w-full max-w-[430px] bg-white rounded-t-3xl p-6 pb-8 animate-slide-up max-h-[85vh] overflow-y-auto">
+          <div className="w-full max-w-[430px] bg-white rounded-t-3xl p-6 pb-8 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-lg font-black text-slate-900">Add Activity</h2>
-              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600">
-                <X size={20} />
-              </button>
+              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
             </div>
-
             <div className="space-y-4">
               <div>
                 <label className="text-xs font-bold text-slate-500 mb-1.5 block">Title</label>
-                <input
-                  autoFocus
-                  value={form.title}
-                  onChange={(e) => setForm({ ...form, title: e.target.value })}
+                <input autoFocus value={form.title} onChange={e => setForm({ ...form, title: e.target.value })}
                   placeholder="e.g. Visit the Louvre"
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400"
-                />
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400" />
               </div>
-
               <div className="flex gap-3">
                 <div className="flex-1">
                   <label className="text-xs font-bold text-slate-500 mb-1.5 block">Time</label>
-                  <input
-                    type="time"
-                    value={form.time}
-                    onChange={(e) => setForm({ ...form, time: e.target.value })}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400"
-                  />
+                  <input type="time" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400" />
                 </div>
                 <div className="flex-1">
                   <label className="text-xs font-bold text-slate-500 mb-1.5 block">Type</label>
-                  <select
-                    value={form.type}
-                    onChange={(e) => setForm({ ...form, type: e.target.value as ActivityType })}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400 bg-white"
-                  >
-                    {Object.keys(TYPE_STYLES).map((t) => (
-                      <option key={t} value={t}>
-                        {TYPE_STYLES[t as ActivityType].emoji} {t.charAt(0).toUpperCase() + t.slice(1)}
-                      </option>
+                  <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value as ActivityType })}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400 bg-white">
+                    {Object.keys(TYPE_STYLES).map(t => (
+                      <option key={t} value={t}>{TYPE_STYLES[t as ActivityType].emoji} {t.charAt(0).toUpperCase() + t.slice(1)}</option>
                     ))}
                   </select>
                 </div>
               </div>
-
               <div>
                 <label className="text-xs font-bold text-slate-500 mb-1.5 block">Location (optional)</label>
-                <input
-                  value={form.location}
-                  onChange={(e) => setForm({ ...form, location: e.target.value })}
+                <input value={form.location} onChange={e => setForm({ ...form, location: e.target.value })}
                   placeholder="e.g. Rue de Rivoli, Paris"
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400"
-                />
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400" />
               </div>
-
               <div>
                 <label className="text-xs font-bold text-slate-500 mb-1.5 block">Notes (optional)</label>
-                <textarea
-                  value={form.notes}
-                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                  placeholder="Booking ref, tips, etc."
-                  rows={2}
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400 resize-none"
-                />
+                <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
+                  placeholder="Booking ref, tips, etc." rows={2}
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-indigo-400 resize-none" />
               </div>
-
-              <button
-                onClick={handleAddActivity}
-                disabled={!form.title.trim()}
-                className="w-full py-3.5 rounded-full gradient-primary text-white font-bold text-sm shadow-hero disabled:opacity-40 transition-opacity mt-2"
-              >
+              <button onClick={handleAddActivity} disabled={!form.title.trim()}
+                className="w-full py-3.5 rounded-full gradient-primary text-white font-bold text-sm shadow-hero disabled:opacity-40 transition-opacity mt-2">
                 Add to Day {activeDay + 1}
               </button>
             </div>

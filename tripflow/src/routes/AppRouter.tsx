@@ -1,14 +1,18 @@
+// src/routes/AppRouter.tsx
+
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
 import DashboardLayout from '../layouts/DashboardLayout';
+import { useAuth } from '../context/AuthContext';
 
-const LandingPage  = lazy(() => import('../pages/LandingPage'));
-const Dashboard    = lazy(() => import('../pages/Dashboard'));
-const Itinerary    = lazy(() => import('../pages/Itinerary'));
-const Expenses     = lazy(() => import('../pages/Expenses'));
-const Places       = lazy(() => import('../pages/Places'));
-const Packing      = lazy(() => import('../pages/Packing'));
-const Settings     = lazy(() => import('../pages/Settings'));
+const LandingPage = lazy(() => import('../pages/LandingPage'));
+const AuthPage    = lazy(() => import('../pages/AuthPage'));
+const Dashboard   = lazy(() => import('../pages/Dashboard'));
+const Itinerary   = lazy(() => import('../pages/Itinerary'));
+const Expenses    = lazy(() => import('../pages/Expenses'));
+const Places      = lazy(() => import('../pages/Places'));
+const Packing     = lazy(() => import('../pages/Packing'));
+const Settings    = lazy(() => import('../pages/Settings'));
 
 const Loader = () => (
   <div className="min-h-screen flex items-center justify-center">
@@ -16,18 +20,49 @@ const Loader = () => (
   </div>
 );
 
+// Redirect authed users away from /auth
+function GuestOnly({ children }: { children: React.ReactNode }) {
+  const { isAuthed, loading } = useAuth();
+  if (loading) return <Loader />;
+  if (isAuthed) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+// Redirect unauthenticated users to /auth
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { isAuthed, loading } = useAuth();
+  if (loading) return <Loader />;
+  if (!isAuthed) return <Navigate to="/auth" replace />;
+  return <>{children}</>;
+}
+
 const router = createBrowserRouter([
-  { path: '/', element: <LandingPage /> },
+  {
+    path: '/',
+    element: <LandingPage />,
+  },
+  {
+    path: '/auth',
+    element: (
+      <GuestOnly>
+        <AuthPage />
+      </GuestOnly>
+    ),
+  },
   {
     path: '/dashboard',
-    element: <DashboardLayout />,
+    element: (
+      <RequireAuth>
+        <DashboardLayout />
+      </RequireAuth>
+    ),
     children: [
-      { index: true, element: <Dashboard /> },
-      { path: 'itinerary', element: <Itinerary /> },
-      { path: 'expenses',  element: <Expenses /> },
-      { path: 'places',    element: <Places /> },
-      { path: 'packing',   element: <Packing /> },
-      { path: 'settings',  element: <Settings /> },
+      { index: true,              element: <Dashboard /> },
+      { path: 'itinerary',        element: <Itinerary /> },
+      { path: 'expenses',         element: <Expenses /> },
+      { path: 'places',           element: <Places /> },
+      { path: 'packing',          element: <Packing /> },
+      { path: 'settings',         element: <Settings /> },
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },
