@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { LayoutDashboard, Calendar, Wallet, MapPin, User } from 'lucide-react';
 
@@ -9,7 +10,41 @@ const NAV_ITEMS = [
   { to: '/dashboard/profile',   icon: User,            label: 'Profile'              },
 ];
 
+function useHideOnScroll() {
+  const [hidden, setHidden] = useState(false);
+  const lastY = useRef(0);
+
+  useEffect(() => {
+    lastY.current = window.scrollY;
+
+    const onScroll = () => {
+      const y = window.scrollY;
+      const diff = y - lastY.current;
+
+      // ignore tiny jitters
+      if (Math.abs(diff) < 4) return;
+
+      if (diff > 0 && y > 64) {
+        // scrolling down, past the top buffer
+        setHidden(true);
+      } else {
+        // scrolling up (or near top)
+        setHidden(false);
+      }
+
+      lastY.current = y;
+    };
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  return hidden;
+}
+
 export default function DashboardLayout() {
+  const hidden = useHideOnScroll();
+
   return (
     <div className="flex flex-col min-h-screen w-full bg-slate-50">
       <main className="flex-1 pb-20 overflow-y-auto no-scrollbar">
@@ -17,25 +52,27 @@ export default function DashboardLayout() {
       </main>
 
       {/* Bottom navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 w-full h-16 bg-white border-t border-slate-100 flex items-center z-30 px-2">
+      <nav
+        className={`fixed bottom-0 left-0 right-0 w-full h-14 bg-white border-t border-slate-100 flex items-center z-30 px-2 transition-transform duration-300 ease-in-out ${
+          hidden ? 'translate-y-full' : 'translate-y-0'
+        }`}
+      >
         {NAV_ITEMS.map(({ to, icon: Icon, label, end }) => (
           <NavLink
             key={to}
             to={to}
             end={end}
-            className={({ isActive }) =>
-              `flex-1 flex flex-col items-center gap-1 py-2 rounded-xl transition-colors ${
-                isActive ? 'text-violet-600' : 'text-slate-400 hover:text-slate-600'
-              }`
-            }
+            aria-label={label}
+            className="flex-1 flex items-center justify-center"
           >
             {({ isActive }) => (
-              <>
-                <div className={`p-1.5 rounded-xl transition-colors ${isActive ? 'bg-violet-50' : ''}`}>
-                  <Icon size={20} strokeWidth={isActive ? 2.5 : 1.8} />
-                </div>
-                <span className="text-[10px] font-semibold">{label}</span>
-              </>
+              <div
+                className={`p-2.5 rounded-xl transition-colors -translate-y-0.5 ${
+                  isActive ? 'bg-violet-50 text-violet-600' : 'text-slate-400 hover:text-slate-600'
+                }`}
+              >
+                <Icon size={22} strokeWidth={isActive ? 2.5 : 1.8} />
+              </div>
             )}
           </NavLink>
         ))}
