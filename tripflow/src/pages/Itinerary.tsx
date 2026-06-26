@@ -647,6 +647,76 @@ function ActivityModal({
   );
 }
 
+// ─── Kitten avatar ────────────────────────────────────────────────────────────
+
+function KittenAvatar() {
+  return (
+    <svg width="44" height="44" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Cute peeping kitten">
+      {/* Body peeking from bottom */}
+      <ellipse cx="22" cy="38" rx="11" ry="6" fill="#f5c2e0" />
+
+      {/* Head */}
+      <ellipse cx="22" cy="26" rx="11" ry="10" fill="#f9d4ec" />
+
+      {/* Left ear */}
+      <polygon points="12,19 10,10 17,16" fill="#f9d4ec" />
+      {/* Left ear inner */}
+      <polygon points="13,18 11.5,12 16,16" fill="#f0a0cc" />
+
+      {/* Right ear */}
+      <polygon points="32,19 34,10 27,16" fill="#f9d4ec" />
+      {/* Right ear inner */}
+      <polygon points="31,18 32.5,12 28,16" fill="#f0a0cc" />
+
+      {/* Face blush left */}
+      <ellipse cx="15" cy="28" rx="3" ry="2" fill="#ffb7d5" opacity="0.55" />
+      {/* Face blush right */}
+      <ellipse cx="29" cy="28" rx="3" ry="2" fill="#ffb7d5" opacity="0.55" />
+
+      {/* Eyes — closed happy curve */}
+      <path d="M17.5 25 Q19 23 20.5 25" stroke="#7C5CFF" strokeWidth="1.4" strokeLinecap="round" fill="none" />
+      <path d="M23.5 25 Q25 23 26.5 25" stroke="#7C5CFF" strokeWidth="1.4" strokeLinecap="round" fill="none" />
+
+      {/* Nose */}
+      <ellipse cx="22" cy="27.5" rx="1.2" ry="0.9" fill="#e87ab0" />
+
+      {/* Mouth */}
+      <path d="M20.5 28.5 Q22 30 23.5 28.5" stroke="#e87ab0" strokeWidth="1" strokeLinecap="round" fill="none" />
+
+      {/* Whiskers left */}
+      <line x1="11" y1="27" x2="18" y2="27.5" stroke="#c9a0c0" strokeWidth="0.7" strokeLinecap="round" />
+      <line x1="11" y1="29" x2="18" y2="28.5" stroke="#c9a0c0" strokeWidth="0.7" strokeLinecap="round" />
+
+      {/* Whiskers right */}
+      <line x1="33" y1="27" x2="26" y2="27.5" stroke="#c9a0c0" strokeWidth="0.7" strokeLinecap="round" />
+      <line x1="33" y1="29" x2="26" y2="28.5" stroke="#c9a0c0" strokeWidth="0.7" strokeLinecap="round" />
+
+      {/* Left paw waving — animated via CSS */}
+      <g style={{ transformOrigin: '14px 34px', animation: 'kittenWave 1.6s ease-in-out infinite' }}>
+        <ellipse cx="14" cy="36" rx="4.5" ry="3" fill="#f9d4ec" />
+        {/* Paw toes */}
+        <ellipse cx="11.5" cy="34.5" rx="1.3" ry="1" fill="#f0a0cc" />
+        <ellipse cx="14" cy="33.8" rx="1.3" ry="1" fill="#f0a0cc" />
+        <ellipse cx="16.5" cy="34.5" rx="1.3" ry="1" fill="#f0a0cc" />
+      </g>
+
+      {/* Right paw still */}
+      <ellipse cx="30" cy="36" rx="4.5" ry="3" fill="#f9d4ec" />
+      <ellipse cx="27.5" cy="34.5" rx="1.3" ry="1" fill="#f0a0cc" />
+      <ellipse cx="30" cy="33.8" rx="1.3" ry="1" fill="#f0a0cc" />
+      <ellipse cx="32.5" cy="34.5" rx="1.3" ry="1" fill="#f0a0cc" />
+
+      <style>{`
+        @keyframes kittenWave {
+          0%,100% { transform: rotate(0deg); }
+          25%      { transform: rotate(-22deg) translateY(-2px); }
+          75%      { transform: rotate(10deg) translateY(-1px); }
+        }
+      `}</style>
+    </svg>
+  );
+}
+
 // ─── Main Itinerary component ──────────────────────────────────────────────────
 
 export default function Itinerary() {
@@ -840,10 +910,14 @@ export default function Itinerary() {
               {totalActivities} {totalActivities === 1 ? 'activity' : 'activities'} planned
             </p>
           </div>
-          <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl"
-            style={{ background: 'linear-gradient(135deg, #7C5CFF, #FFB7E1)' }}>
-            🦋
-          </div>
+          {/* Peeping kitten avatar */}
+          <motion.div
+            className="w-12 h-12 rounded-2xl flex items-center justify-center overflow-hidden flex-shrink-0"
+            style={{ background: 'linear-gradient(135deg, #ede8ff, #ffd6f0)' }}
+            whileHover={{ scale: 1.08 }}
+          >
+            <KittenAvatar />
+          </motion.div>
         </div>
       </div>
 
