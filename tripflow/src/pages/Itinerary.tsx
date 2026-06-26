@@ -791,12 +791,22 @@ export default function Itinerary() {
   };
 
   const openEditModal = (activity: RichActivity) => {
+    // category is the new field; type is the legacy field from old saves.
+    // Prefer category, then try to cast type if it's a valid CategoryKey, then default.
+    const validCategories = Object.keys(CATEGORIES) as CategoryKey[];
+    const resolvedCategory: CategoryKey =
+      activity.category && validCategories.includes(activity.category)
+        ? activity.category
+        : validCategories.includes(activity.type as unknown as CategoryKey)
+        ? (activity.type as unknown as CategoryKey)
+        : 'sightseeing';
+
     setForm({
       timeStart: activity.time,
       timeEnd:   activity.timeEnd ?? activity.time,
       title:     activity.title,
       location:  activity.location ?? '',
-      category:  activity.category ?? 'custom',
+      category:  resolvedCategory,
       notes:     activity.notes ?? '',
     });
     setModalMode(activity.id);
@@ -809,8 +819,8 @@ export default function Itinerary() {
       timeEnd:  form.timeEnd,
       title:    form.title.trim(),
       location: form.location.trim() || undefined,
-      category: form.category,
-      type:     form.category as unknown as ItineraryActivity['type'],
+      category: form.category,                              // new field — always written
+      type:     form.category as unknown as ItineraryActivity['type'], // legacy compat
       notes:    form.notes.trim() || undefined,
     };
 
