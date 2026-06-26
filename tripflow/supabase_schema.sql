@@ -6,6 +6,7 @@
 -- ─────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.trips (
   id          TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
   destination TEXT NOT NULL,
   start_date  DATE NOT NULL,
   end_date    DATE NOT NULL,
@@ -14,6 +15,8 @@ CREATE TABLE IF NOT EXISTS public.trips (
   travel_type TEXT,
   created_at  TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_trips_user_id ON public.trips(user_id);
 
 -- ─────────────────────────────────────────────────────────────────
 -- Itinerary: Days table

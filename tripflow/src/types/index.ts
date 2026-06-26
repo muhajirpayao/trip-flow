@@ -1,5 +1,5 @@
 export type TravelType = 'solo' | 'couple' | 'family' | 'friends';
-export type Currency = 'USD' | 'EUR' | 'GBP' | 'JPY' | 'SGD' | 'AUD' | 'CAD' | 'HKD';
+export type Currency = 'PHP' | 'USD' | 'EUR' | 'GBP' | 'JPY' | 'SGD' | 'AUD' | 'CAD' | 'HKD';
 
 export interface Trip {
   id: string;

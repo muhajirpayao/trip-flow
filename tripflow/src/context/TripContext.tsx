@@ -1,103 +1,131 @@
 // src/context/TripContext.tsx
-// Loads the current user's trip from Supabase on mount.
-// Saves new trips to the `trips` table with the user's id.
-
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from 'react';
+import { createContext, useContext, useState, useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import type { Trip } from '../types';
 
-interface TripContextType {
+interface TripContextValue {
   trip: Trip | null;
-  loading: boolean;
-  saveTrip: (trip: Trip) => Promise<void>;
-  clearTrip: () => Promise<void>;
+  allTrips: Trip[];
+  saveTrip: (t: Trip) => Promise<boolean>;
+  clearTrip: () => void;
+  loadingTrips: boolean;
 }
 
-const TripContext = createContext<TripContextType | null>(null);
+const TripContext = createContext<TripContextValue | null>(null);
 
 export function TripProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const [trip, setTrip]     = useState<Trip | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [trip, setTrip] = useState<Trip | null>(null);
+  const [allTrips, setAllTrips] = useState<Trip[]>([]);
+  const [loadingTrips, setLoadingTrips] = useState(true);
 
-  // Load the user's most recent trip whenever the user changes
   useEffect(() => {
     if (!user) {
       setTrip(null);
-      setLoading(false);
+      setAllTrips([]);
+      setLoadingTrips(false);
       return;
     }
+    setLoadingTrips(true);
 
-    setLoading(true);
     supabase
       .from('trips')
       .select('*')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(1)
-      .single()
       .then(({ data }) => {
-        if (data) {
-          // Map snake_case DB columns → camelCase Trip type
-          setTrip({
-            id:          data.id,
-            destination: data.destination,
-            startDate:   data.start_date,
-            endDate:     data.end_date,
-            budget:      data.budget,
-            currency:    data.currency,
-            travelType:  data.travel_type,
-            createdAt:   data.created_at,
-          });
-        } else {
-          setTrip(null);
-        }
-        setLoading(false);
+        if (data && data.length > 0) setTrip(rowToTrip(data[0]));
+      });
+
+    supabase
+      .from('trips')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        setAllTrips((data ?? []).map(rowToTrip));
+        setLoadingTrips(false);
       });
   }, [user]);
 
-  const saveTrip = async (newTrip: Trip) => {
-    if (!user) return;
+  const saveTrip = async (t: Trip) => {
+    if (!user) return false;
+
+    // Sanitize strings to remove lone Unicode surrogates that break JSON serialization
+    const sanitize = (s: string) =>
+      s.replace(/[\uD800-\uDFFF]/g, (c) => {
+        const code = c.charCodeAt(0);
+        return (code >= 0xD800 && code <= 0xDBFF) ? '' : c; // strip lone surrogates
+      });
 
     const row = {
-      id:           newTrip.id,
-      user_id:      user.id,
-      destination:  newTrip.destination,
-      start_date:   newTrip.startDate,
-      end_date:     newTrip.endDate,
-      budget:       newTrip.budget,
-      currency:     newTrip.currency,
-      travel_type:  newTrip.travelType,
-      created_at:   newTrip.createdAt,
+      id: t.id,
+      user_id: user.id,
+      destination: sanitize(t.destination),
+      start_date: t.startDate,
+      end_date: t.endDate,
+      budget: t.budget ?? null,
+      currency: t.currency ?? 'USD',
+      travel_type: t.travelType ?? null,
+      created_at: t.createdAt,
     };
 
-    const { error } = await supabase.from('trips').upsert(row);
-    if (!error) setTrip(newTrip);
+    console.log('saveTrip: user.id=', user.id, 'payload=', row);
+
+    // Use insert + onConflict instead of upsert to avoid PGRST102
+    const res = await supabase
+      .from('trips')
+      .upsert(row, { onConflict: 'id', ignoreDuplicates: false });
+
+    console.log('saveTrip result', res);
+
+    if (res.error) {
+      console.error('saveTrip error', res.error);
+      return false;
+    }
+
+    setTrip({ ...t, destination: sanitize(t.destination) });
+    setAllTrips(prev => [
+      { ...t, destination: sanitize(t.destination) },
+      ...prev.filter(p => p.id !== t.id),
+    ]);
+    return true;
   };
 
-  const clearTrip = async () => {
-    if (!user || !trip) return;
-    await supabase.from('trips').delete().eq('id', trip.id).eq('user_id', user.id);
-    setTrip(null);
-  };
+  const clearTrip = () => setTrip(null);
 
   return (
-    <TripContext.Provider value={{ trip, loading, saveTrip, clearTrip }}>
+    <TripContext.Provider value={{ trip, allTrips, saveTrip, clearTrip, loadingTrips }}>
       {children}
     </TripContext.Provider>
   );
 }
 
-// eslint-disable-next-line react-refresh/only-export-components
+function rowToTrip(row: Record<string, unknown>): Trip {
+  const budget = typeof row.budget === 'string'
+    ? Number(row.budget)
+    : Number(row.budget ?? 0);
+  const createdAt = row.created_at instanceof Date
+    ? row.created_at.toISOString()
+    : String(row.created_at ?? new Date().toISOString());
+
+  return {
+    id: String(row.id ?? ''),
+    destination: String(row.destination ?? ''),
+    startDate: String(row.start_date ?? ''),
+    endDate: String(row.end_date ?? ''),
+    budget,
+    currency: String(row.currency ?? 'USD') as Trip['currency'],
+    travelType: String(row.travel_type ?? 'solo') as Trip['travelType'],
+    createdAt,
+  } as Trip;
+}
+
 export function useTrip() {
   const ctx = useContext(TripContext);
-  if (!ctx) throw new Error('useTrip must be used within TripProvider');
+  if (!ctx) throw new Error('useTrip must be used inside TripProvider');
   return ctx;
 }

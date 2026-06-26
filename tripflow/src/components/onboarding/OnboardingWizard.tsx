@@ -1,5 +1,5 @@
 // src/components/onboarding/OnboardingWizard.tsx
-// Same UI as before. saveTrip() now persists to Supabase via TripContext.
+// PHP added to currencies; date inputs block past dates.
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -10,8 +10,16 @@ import { tripDays, fmtDate } from '../../utils';
 
 const STEPS = ['Destination', 'Dates', 'Budget', 'Travel Type', 'Review'];
 
-const DESTINATIONS = ['🇯🇵 Japan', '🇸🇬 Singapore', '🇭🇰 Hong Kong', '🇮🇹 Italy', '🇹🇭 Thailand', '🇫🇷 France'];
-const CURRENCIES: Currency[] = ['USD', 'EUR', 'GBP', 'JPY', 'SGD', 'AUD', 'CAD', 'HKD'];
+const DESTINATIONS = [
+  { emoji: '🇯🇵', label: 'Japan' },
+  { emoji: '🇸🇬', label: 'Singapore' },
+  { emoji: '🇭🇰', label: 'Hong Kong' },
+  { emoji: '🇮🇹', label: 'Italy' },
+  { emoji: '🇹🇭', label: 'Thailand' },
+  { emoji: '🇫🇷', label: 'France' },
+  { emoji: '🇵🇭', label: 'Philippines' },
+];
+const CURRENCIES: Currency[] = ['PHP', 'USD', 'EUR', 'GBP', 'JPY', 'SGD', 'AUD', 'CAD', 'HKD'];
 const TRAVEL_TYPES: { value: TravelType; icon: string; label: string }[] = [
   { value: 'solo',    icon: '🧳', label: 'Solo' },
   { value: 'couple',  icon: '💑', label: 'Couple' },
@@ -19,7 +27,10 @@ const TRAVEL_TYPES: { value: TravelType; icon: string; label: string }[] = [
   { value: 'friends', icon: '👯', label: 'Friends' },
 ];
 
-const EMPTY_FORM: OnboardingForm = { dest: '', startDate: '', endDate: '', budget: '', currency: 'USD', travelType: '' };
+const EMPTY_FORM: OnboardingForm = { dest: '', startDate: '', endDate: '', budget: '', currency: 'PHP', travelType: '' };
+
+// Today's date in YYYY-MM-DD format (used as min for date pickers)
+const TODAY = new Date().toISOString().slice(0, 10);
 
 interface Props { onClose: () => void; }
 
@@ -42,6 +53,7 @@ export default function OnboardingWizard({ onClose }: Props) {
     if (step === 1) {
       if (!form.startDate) e.startDate = 'Pick a start date';
       if (!form.endDate)   e.endDate   = 'Pick an end date';
+      if (form.startDate && form.startDate < TODAY) e.startDate = 'Start date cannot be in the past';
       if (form.startDate && form.endDate && form.endDate <= form.startDate)
         e.endDate = 'End must be after start';
     }
@@ -66,9 +78,13 @@ export default function OnboardingWizard({ onClose }: Props) {
       travelType:  form.travelType as TravelType,
       createdAt:   new Date().toISOString(),
     };
-    await saveTrip(trip);   // ← persists to Supabase
+    const saved = await saveTrip(trip);
     setSaving(false);
-    navigate('/dashboard');
+    if (saved) {
+      navigate('/dashboard/trip');
+    } else {
+      console.error('Unable to save trip.');
+    }
   };
 
   return (
@@ -91,11 +107,11 @@ export default function OnboardingWizard({ onClose }: Props) {
           </button>
         </div>
 
-        {/* Progress dots */}
+        {/* Progress bar */}
         <div className="flex gap-2 px-6 py-4">
           {STEPS.map((_, i) => (
             <div key={i}
-              className={`h-1.5 rounded-full transition-all duration-300 ${i <= step ? 'gradient-primary' : 'bg-slate-100'} ${i === step ? 'flex-[2]' : 'flex-1'}`}
+              className={`h-1.5 rounded-full transition-all duration-300 ${i <= step ? 'bg-gradient-to-r from-indigo-500 to-violet-600' : 'bg-slate-100'} ${i === step ? 'flex-[2]' : 'flex-1'}`}
             />
           ))}
         </div>
@@ -121,12 +137,12 @@ export default function OnboardingWizard({ onClose }: Props) {
               />
               {errors.dest && <p className="text-xs text-red-500 mt-1">{errors.dest}</p>}
               <div className="flex flex-wrap gap-2 mt-4">
-                {DESTINATIONS.map(d => (
-                  <button key={d} onClick={() => set('dest', d.slice(3))}
-                    className="px-3 py-1.5 rounded-full bg-slate-100 text-xs font-medium text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 transition-colors">
-                    {d}
-                  </button>
-                ))}
+{DESTINATIONS.map(d => (
+  <button key={d.label} onClick={() => set('dest', d.label)}
+    className="px-3 py-1.5 rounded-full bg-slate-100 text-xs font-medium text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 transition-colors">
+    {d.emoji} {d.label}
+  </button>
+))}
               </div>
             </div>
           )}
@@ -139,16 +155,43 @@ export default function OnboardingWizard({ onClose }: Props) {
                 <h2 className="text-xl font-bold">When are you going?</h2>
               </div>
               <p className="text-sm text-slate-500 mb-5">Set your departure and return dates.</p>
-              {(['startDate', 'endDate'] as const).map((key, i) => (
-                <div key={key} className="mb-4">
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                    {i === 0 ? 'Start Date' : 'End Date'}
-                  </label>
-                  <input type="date" value={form[key]} onChange={e => set(key, e.target.value)}
-                    className={`w-full px-4 py-3.5 rounded-xl border text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${errors[key] ? 'border-red-400' : 'border-slate-200'}`} />
-                  {errors[key] && <p className="text-xs text-red-500 mt-1">{errors[key]}</p>}
-                </div>
-              ))}
+
+              {/* Start date */}
+              <div className="mb-4">
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                  Start Date
+                </label>
+                <input
+                  type="date"
+                  value={form.startDate}
+                  min={TODAY}
+                  onChange={e => {
+                    set('startDate', e.target.value);
+                    // Reset end date if it's now before start
+                    if (form.endDate && e.target.value >= form.endDate) {
+                      set('endDate', '');
+                    }
+                  }}
+                  className={`w-full px-4 py-3.5 rounded-xl border text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${errors.startDate ? 'border-red-400' : 'border-slate-200'}`}
+                />
+                {errors.startDate && <p className="text-xs text-red-500 mt-1">{errors.startDate}</p>}
+              </div>
+
+              {/* End date */}
+              <div className="mb-4">
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                  End Date
+                </label>
+                <input
+                  type="date"
+                  value={form.endDate}
+                  min={form.startDate || TODAY}
+                  onChange={e => set('endDate', e.target.value)}
+                  className={`w-full px-4 py-3.5 rounded-xl border text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${errors.endDate ? 'border-red-400' : 'border-slate-200'}`}
+                />
+                {errors.endDate && <p className="text-xs text-red-500 mt-1">{errors.endDate}</p>}
+              </div>
+
               {form.startDate && form.endDate && form.endDate > form.startDate && (
                 <div className="mt-3 px-4 py-3 bg-indigo-50 rounded-xl flex items-center gap-2">
                   <span className="text-xl">🗓️</span>
@@ -170,18 +213,24 @@ export default function OnboardingWizard({ onClose }: Props) {
               <div className="flex flex-wrap gap-2 mb-4">
                 {CURRENCIES.map(c => (
                   <button key={c} onClick={() => set('currency', c)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${form.currency === c ? 'gradient-primary text-white border-transparent' : 'border-slate-200 text-slate-600 bg-white'}`}>
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${form.currency === c ? 'bg-gradient-to-r from-indigo-500 to-violet-600 text-white border-transparent' : 'border-slate-200 text-slate-600 bg-white'}`}>
                     {c}
                   </button>
                 ))}
               </div>
-              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Amount</label>
-              <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">{form.currency}</span>
-                <input type="number" value={form.budget} onChange={e => set('budget', e.target.value)} placeholder="0"
-                  className={`w-full pl-14 pr-4 py-3.5 rounded-xl border text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${errors.budget ? 'border-red-400' : 'border-slate-200'}`} />
-              </div>
-              {errors.budget && <p className="text-xs text-red-500 mt-1">{errors.budget}</p>}
+<label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Amount</label>
+<div className="relative">
+  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">{form.currency}</span>
+  <input
+    type="text"
+    inputMode="numeric"
+    value={form.budget ? Number(form.budget).toLocaleString() : ''}
+    onChange={e => set('budget', e.target.value.replace(/[^0-9]/g, ''))}
+    placeholder="0"
+    className={`w-full pl-14 pr-4 py-3.5 rounded-xl border text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${errors.budget ? 'border-red-400' : 'border-slate-200'}`}
+  />
+</div>
+{errors.budget && <p className="text-xs text-red-500 mt-1">{errors.budget}</p>}
             </div>
           )}
 
@@ -244,12 +293,12 @@ export default function OnboardingWizard({ onClose }: Props) {
           )}
           {step < STEPS.length - 1 ? (
             <button onClick={next}
-              className="flex-[2] py-4 rounded-full gradient-primary text-white font-bold text-sm shadow-hero hover:opacity-90 transition-opacity">
+              className="flex-[2] py-4 rounded-full bg-gradient-to-r from-indigo-500 to-violet-600 text-white font-bold text-sm shadow-lg shadow-indigo-200 hover:opacity-90 transition-opacity">
               Continue →
             </button>
           ) : (
             <button onClick={create} disabled={saving}
-              className="flex-[2] py-4 rounded-full gradient-primary text-white font-bold text-sm shadow-hero hover:opacity-90 transition-opacity disabled:opacity-50">
+              className="flex-[2] py-4 rounded-full bg-gradient-to-r from-indigo-500 to-violet-600 text-white font-bold text-sm shadow-lg shadow-indigo-200 hover:opacity-90 transition-opacity disabled:opacity-50">
               {saving ? 'Saving…' : 'Create My Trip 🚀'}
             </button>
           )}
