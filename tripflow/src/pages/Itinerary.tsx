@@ -48,9 +48,6 @@ type RichActivity = ItineraryActivity & {
   status?:   ActivityStatus;
   notes?:    string;
   location?: string;
-  /** ISO date (yyyy-mm-dd). Set when an activity spans more than one day
-   *  (e.g. a hotel stay or a flight that lands the next day). When absent
-   *  or equal to the day it lives on, the activity is treated as single-day. */
   dateEnd?:  string;
 };
 
@@ -93,26 +90,13 @@ function addDays(dateStr: string, n: number) {
   return d.toISOString().slice(0, 10);
 }
 
-/**
- * Resolves the *effective* status of an activity.
- *
- * Rule: an explicit user choice (tapping the checkbox) always wins, in
- * either direction — that's what lets someone un-complete something even
- * after its time has passed, or check something off early. Only when there
- * is no explicit choice do we fall back to auto-detecting from the clock,
- * which is what makes activities automatically flip to "Completed" once
- * their end time passes, and automatically flip to "In Progress" when
- * they're currently happening.
- */
 function detectStatus(activity: RichActivity, dayDate: string): ActivityStatus {
   if (activity.status === 'completed' || activity.status === 'upcoming') {
     return activity.status;
   }
-
   const today = todayDate();
   if (dayDate < today) return 'completed';
   if (dayDate > today) return 'upcoming';
-
   const now = nowTime();
   if (activity.time <= now && (!activity.timeEnd || activity.timeEnd >= now)) return 'inprogress';
   if ((activity.timeEnd ?? activity.time) < now) return 'completed';
@@ -156,9 +140,7 @@ type FormState = {
   location:  string;
   category:  CategoryKey;
   notes:     string;
-  /** Whether the date-range picker is active for this activity. */
   multiDay:  boolean;
-  /** ISO end date. Equals the day's own date when not multi-day. */
   dateEnd:   string;
 };
 
@@ -179,11 +161,9 @@ function DayProgress({ total, completed }: { total: number; completed: number })
       className="mx-4 sm:mx-6 mb-4 rounded-3xl overflow-hidden"
       style={{ background: 'linear-gradient(135deg, #7C5CFF 0%, #8B5CF6 100%)' }}
     >
-      {/* Decorative blobs */}
       <div className="relative p-4 sm:p-5 overflow-hidden">
         <div className="absolute -top-8 -right-8 w-28 h-28 rounded-full bg-white/10" />
         <div className="absolute -bottom-6 left-8 w-16 h-16 rounded-full bg-white/[0.07]" />
-
         <div className="relative flex items-start justify-between mb-3">
           <div>
             <p className="text-white/70 text-[11px] font-semibold mb-0.5">Day progress</p>
@@ -194,8 +174,6 @@ function DayProgress({ total, completed }: { total: number; completed: number })
             <span className="text-white text-3xl font-black">{pct}%</span>
           </div>
         </div>
-
-        {/* Progress bar */}
         <div className="h-2 rounded-full bg-white/25 overflow-hidden">
           <motion.div
             className="h-full rounded-full"
@@ -224,19 +202,14 @@ function CategoryBadge({ cat }: { cat: CategoryKey }) {
 // ─── Activity card ─────────────────────────────────────────────────────────────
 
 function ActivityCard({
-  activity,
-  dayDate,
-  isDayInPast,
-  onEdit,
-  onDelete,
-  onToggle,
+  activity, dayDate, isDayInPast, onEdit, onDelete, onToggle,
 }: {
-  activity:     RichActivity;
-  dayDate:      string;
-  isDayInPast:  boolean;
-  onEdit:       () => void;
-  onDelete:     () => void;
-  onToggle:     () => void;
+  activity:    RichActivity;
+  dayDate:     string;
+  isDayInPast: boolean;
+  onEdit:      () => void;
+  onDelete:    () => void;
+  onToggle:    () => void;
 }) {
   const cat    = CATEGORIES[activity.category ?? 'custom'];
   const status = detectStatus(activity, dayDate);
@@ -244,7 +217,6 @@ function ActivityCard({
   const isDone = status === 'completed';
   const isMultiDay = !!activity.dateEnd && activity.dateEnd !== dayDate;
 
-  // Timeline node color
   const nodeStyle =
     status === 'completed'  ? 'bg-gradient-to-br from-emerald-300 to-emerald-500 shadow-emerald-200' :
     status === 'inprogress' ? 'bg-gradient-to-br from-pink-300 to-pink-500 shadow-pink-200 animate-pulse' :
@@ -259,7 +231,6 @@ function ActivityCard({
       transition={{ type: 'spring', stiffness: 340, damping: 28 }}
       layout
     >
-      {/* Timeline node */}
       <div className="flex flex-col items-center pt-1 flex-shrink-0" style={{ width: 22 }}>
         <motion.div
           className={`w-[22px] h-[22px] rounded-full flex items-center justify-center text-white text-[10px] font-black shadow-md ${nodeStyle}`}
@@ -269,7 +240,6 @@ function ActivityCard({
         </motion.div>
       </div>
 
-      {/* Card */}
       <motion.div
         className={`flex-1 min-w-0 rounded-3xl border p-3.5 sm:p-4 transition-all duration-300 overflow-hidden ${
           isDone
@@ -280,43 +250,35 @@ function ActivityCard({
         whileTap={{ scale: 0.985 }}
       >
         <div className="flex items-start gap-3">
-          {/* Category icon */}
           <div className={`w-9 h-9 rounded-2xl flex items-center justify-center text-base flex-shrink-0 ${cat.bg}`}>
             {cat.emoji}
           </div>
-
           <div className="min-w-0 flex-1">
-            {/* Multi-day date range (only shown when this activity spans more than one day) */}
             {isMultiDay && (
               <div className="flex items-center gap-1.5 text-[10px] font-black text-violet-500 mb-1 min-w-0">
                 <CalendarIcon size={11} className="flex-shrink-0" />
                 <span className="truncate">{fmtDate(dayDate)} – {fmtDate(activity.dateEnd as string)}</span>
               </div>
             )}
-            {/* Time */}
             <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 mb-0.5">
               <Clock size={11} className="flex-shrink-0" />
               {fmtTimeRange(activity.time, activity.timeEnd)}
             </div>
-            {/* Title — wraps up to 2 lines instead of overflowing, so long titles never spill into neighboring elements */}
             <h3
               className={`text-sm font-black text-slate-900 break-words leading-snug ${isDone ? 'line-through text-slate-400' : ''}`}
               style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
             >
               {activity.title}
             </h3>
-            {/* Location */}
             {activity.location && (
               <div className="flex items-center gap-1 text-xs text-slate-400 mt-0.5 min-w-0">
                 <MapPin size={11} className="flex-shrink-0" />
                 <span className="truncate min-w-0">{activity.location}</span>
               </div>
             )}
-            {/* Notes */}
             {activity.notes && (
               <p className="text-xs text-slate-400 mt-1.5 leading-relaxed break-words">{activity.notes}</p>
             )}
-            {/* Status + badge row */}
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${st.pill}`}>
                 {st.label}
@@ -324,10 +286,7 @@ function ActivityCard({
               <CategoryBadge cat={activity.category ?? 'custom'} />
             </div>
           </div>
-
-          {/* Actions */}
           <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-            {/* Check toggle */}
             <motion.button
               onClick={onToggle}
               whileTap={{ scale: 0.8 }}
@@ -405,8 +364,8 @@ function DailySummary({ total, completed }: { total: number; completed: number }
       </div>
       <div className="grid grid-cols-2 gap-3">
         {[
-          { label: 'Activities',  value: String(total),      sub: `${completed} done` },
-          { label: 'Remaining',   value: String(total - completed), sub: 'to go' },
+          { label: 'Activities', value: String(total),           sub: `${completed} done` },
+          { label: 'Remaining',  value: String(total - completed), sub: 'to go' },
         ].map(s => (
           <div key={s.label} className="bg-white/70 rounded-2xl p-3">
             <p className="text-[10px] text-slate-400 font-semibold">{s.label}</p>
@@ -503,22 +462,12 @@ function DeleteConfirmSheet({
 // ─── Activity modal ────────────────────────────────────────────────────────────
 
 function ActivityModal({
-  isEditing,
-  activeDay,
-  dayWeekday,
-  dayDateStr,
-  form,
-  setForm,
-  onSave,
-  onClose,
-  conflict,
-  startOptions,
-  endOptions,
+  isEditing, activeDay, dayWeekday, dayDateStr,
+  form, setForm, onSave, onClose, conflict, startOptions, endOptions,
 }: {
   isEditing:    boolean;
   activeDay:    number;
   dayWeekday:   string;
-  /** ISO date of the day this modal was opened from — the start date of the activity. */
   dayDateStr:   string;
   form:         FormState;
   setForm:      React.Dispatch<React.SetStateAction<FormState>>;
@@ -543,9 +492,7 @@ function ActivityModal({
         transition={{ type: 'spring', damping: 28, stiffness: 320 }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Drag handle */}
         <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto mb-4" />
-
         <div className="flex items-start justify-between mb-1">
           <div>
             <h2 className="text-lg font-black text-slate-900">
@@ -559,7 +506,6 @@ function ActivityModal({
           </button>
         </div>
 
-        {/* Conflict warning */}
         <AnimatePresence>
           {conflict && (
             <motion.div
@@ -576,7 +522,6 @@ function ActivityModal({
         </AnimatePresence>
 
         <div className="space-y-4 mt-4">
-          {/* Title */}
           <div>
             <label className="text-xs font-bold text-slate-500 mb-1.5 block" htmlFor="act-title">Title</label>
             <input
@@ -588,7 +533,6 @@ function ActivityModal({
             />
           </div>
 
-          {/* Category grid */}
           <div>
             <label className="text-xs font-bold text-slate-500 mb-2 block">Category</label>
             <div className="grid grid-cols-5 gap-2">
@@ -611,7 +555,6 @@ function ActivityModal({
             </div>
           </div>
 
-          {/* Time range */}
           <div>
             <label className="text-xs font-bold text-slate-500 mb-1.5 block">Time</label>
             <div className="flex items-center gap-2">
@@ -650,7 +593,6 @@ function ActivityModal({
             </p>
           </div>
 
-          {/* Multi-day toggle — for hotel stays, flights, multi-day tours */}
           <div>
             <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50/70 border border-slate-200">
               <div className="pr-3">
@@ -663,11 +605,7 @@ function ActivityModal({
                 aria-checked={form.multiDay}
                 onClick={() => setForm(f => {
                   const turningOn = !f.multiDay;
-                  return {
-                    ...f,
-                    multiDay: turningOn,
-                    dateEnd: turningOn ? addDays(dayDateStr, 1) : dayDateStr,
-                  };
+                  return { ...f, multiDay: turningOn, dateEnd: turningOn ? addDays(dayDateStr, 1) : dayDateStr };
                 })}
                 className={`w-11 h-6 rounded-full relative flex-shrink-0 transition-colors ${form.multiDay ? 'bg-violet-500' : 'bg-slate-200'}`}
               >
@@ -678,7 +616,6 @@ function ActivityModal({
                 />
               </button>
             </div>
-
             <AnimatePresence initial={false}>
               {form.multiDay && (
                 <motion.div
@@ -706,7 +643,6 @@ function ActivityModal({
             </AnimatePresence>
           </div>
 
-          {/* Location */}
           <div>
             <label className="text-xs font-bold text-slate-500 mb-1.5 block" htmlFor="act-loc">Location (optional)</label>
             <input
@@ -718,7 +654,6 @@ function ActivityModal({
             />
           </div>
 
-          {/* Notes */}
           <div>
             <label className="text-xs font-bold text-slate-500 mb-1.5 block" htmlFor="act-notes">Notes (optional)</label>
             <textarea
@@ -747,57 +682,36 @@ function ActivityModal({
   );
 }
 
-// ─── Kitten avatar ────────────────────────────────────────────────────────────
+// ─── Kitten avatar ─────────────────────────────────────────────────────────────
 
 function KittenAvatar() {
   return (
     <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Cute peeping kitten">
-      {/* Left ear */}
       <polygon points="8,20 5,4 18,14" fill="#f9d4ec" />
       <polygon points="9.5,18 7,7 16,13" fill="#f0a0cc" />
-
-      {/* Right ear */}
       <polygon points="40,20 43,4 30,14" fill="#f9d4ec" />
       <polygon points="38.5,18 41,7 32,13" fill="#f0a0cc" />
-
-      {/* Head — big and centered */}
       <ellipse cx="24" cy="30" rx="18" ry="16" fill="#f9d4ec" />
-
-      {/* Blush cheeks */}
       <ellipse cx="12" cy="34" rx="4.5" ry="3" fill="#ffb7d5" opacity="0.6" />
       <ellipse cx="36" cy="34" rx="4.5" ry="3" fill="#ffb7d5" opacity="0.6" />
-
-      {/* Eyes — big sparkly round eyes */}
       <circle cx="18" cy="27" r="4" fill="white" />
       <circle cx="30" cy="27" r="4" fill="white" />
       <circle cx="18" cy="27" r="2.5" fill="#7C5CFF" />
       <circle cx="30" cy="27" r="2.5" fill="#7C5CFF" />
-      {/* Eye shine */}
       <circle cx="19.2" cy="25.8" r="1" fill="white" />
       <circle cx="31.2" cy="25.8" r="1" fill="white" />
-
-      {/* Nose */}
       <ellipse cx="24" cy="32" rx="1.8" ry="1.3" fill="#e87ab0" />
-
-      {/* Mouth */}
       <path d="M21.5 33.5 Q24 36.5 26.5 33.5" stroke="#e87ab0" strokeWidth="1.2" strokeLinecap="round" fill="none" />
-
-      {/* Whiskers left */}
       <line x1="5"  y1="31" x2="19" y2="32.5" stroke="#d4a0c4" strokeWidth="0.9" strokeLinecap="round" />
       <line x1="5"  y1="34" x2="19" y2="33.5" stroke="#d4a0c4" strokeWidth="0.9" strokeLinecap="round" />
-
-      {/* Whiskers right */}
       <line x1="43" y1="31" x2="29" y2="32.5" stroke="#d4a0c4" strokeWidth="0.9" strokeLinecap="round" />
       <line x1="43" y1="34" x2="29" y2="33.5" stroke="#d4a0c4" strokeWidth="0.9" strokeLinecap="round" />
-
-      {/* Little waving paw peeking from bottom */}
       <g style={{ transformOrigin: '10px 44px', animation: 'kittenWave 1.8s ease-in-out infinite' }}>
         <ellipse cx="10" cy="45" rx="6" ry="4" fill="#f9d4ec" />
         <ellipse cx="7"  cy="42" rx="1.8" ry="1.4" fill="#f0a0cc" />
         <ellipse cx="10" cy="41" rx="1.8" ry="1.4" fill="#f0a0cc" />
         <ellipse cx="13" cy="42" rx="1.8" ry="1.4" fill="#f0a0cc" />
       </g>
-
       <style>{`
         @keyframes kittenWave {
           0%,100% { transform: rotate(0deg) translateY(0px); }
@@ -814,17 +728,17 @@ function KittenAvatar() {
 export default function Itinerary() {
   const { trip } = useTrip();
 
-  const [days,      setDays]      = useState<ItineraryDay[]>([]);
-  const [dbLoading, setDbLoading] = useState(true);
-  const [activeDay, setActiveDay] = useState(0);
-  const [dayNotes,  setDayNotes]  = useState<Record<number, string>>({});
-
+  const [days,         setDays]         = useState<ItineraryDay[]>([]);
+  const [dbLoading,    setDbLoading]    = useState(true);
+  const [activeDay,    setActiveDay]    = useState(0);
+  const [dayNotes,     setDayNotes]     = useState<Record<number, string>>({});
+  const [saving,       setSaving]       = useState(false);
+  const [saveError,    setSaveError]    = useState<string | null>(null);
   const [modalMode,    setModalMode]    = useState<null | 'add' | string>(null);
   const [form,         setForm]         = useState<FormState>(BLANK_FORM);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-  // Re-render once a minute so statuses (in-progress / auto-completed) stay
-  // in sync with the clock without the user needing to refresh anything.
+  // Re-render once a minute so statuses stay in sync with the clock
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 60_000);
@@ -852,10 +766,6 @@ export default function Itinerary() {
   const endOpts     = buildTimeOptions(form.timeStart);
   const isEditing   = modalMode !== null && modalMode !== 'add';
 
-  // Completed count now shares the exact same status logic as each card,
-  // so the progress bar, the daily summary, and the checkmarks on cards can
-  // never disagree with each other — and all three auto-update once an
-  // activity's end time passes.
   const completedCount = useMemo(() => {
     if (!day) return 0;
     return (day.activities as RichActivity[]).filter(
@@ -863,16 +773,24 @@ export default function Itinerary() {
     ).length;
   }, [day]);
 
-  // Conflict detection (warn only, don't block)
   const conflict = useMemo((): RichActivity | null => {
     if (modalMode === null || !day) return null;
     const excludeId = isEditing ? modalMode : undefined;
     return hasConflict(form.timeStart, form.timeEnd, day.activities as RichActivity[], excludeId);
   }, [form.timeStart, form.timeEnd, day, modalMode, isEditing]);
 
-  const persist = useCallback((next: ItineraryDay[]) => {
+  // ── KEY FIX: persist now awaits the save and shows errors ──
+  const persist = useCallback(async (next: ItineraryDay[]) => {
     setDays(next);
-    if (trip) saveItinerary(trip.id, next);
+    if (!trip) return;
+    setSaving(true);
+    setSaveError(null);
+    const result = await saveItinerary(trip.id, next);
+    setSaving(false);
+    if (!result.success) {
+      setSaveError(result.error ?? 'Failed to save. Please try again.');
+      console.error('[Itinerary] save failed:', result.error);
+    }
   }, [trip]);
 
   const openAddModal = () => {
@@ -890,8 +808,6 @@ export default function Itinerary() {
   };
 
   const openEditModal = (activity: RichActivity) => {
-    // category is the new field; type is the legacy field from old saves.
-    // Prefer category, then try to cast type if it's a valid CategoryKey, then default.
     const validCategories = Object.keys(CATEGORIES) as CategoryKey[];
     const resolvedCategory: CategoryKey =
       activity.category && validCategories.includes(activity.category)
@@ -901,7 +817,6 @@ export default function Itinerary() {
         : 'sightseeing';
 
     const hasDateRange = !!activity.dateEnd && activity.dateEnd !== day?.date;
-
     setForm({
       timeStart: activity.time,
       timeEnd:   activity.timeEnd ?? activity.time,
@@ -923,8 +838,8 @@ export default function Itinerary() {
       timeEnd:  form.timeEnd,
       title:    form.title.trim(),
       location: form.location.trim() || undefined,
-      category: form.category,                              // new field — always written
-      type:     form.category as unknown as ItineraryActivity['type'], // legacy compat
+      category: form.category,
+      type:     form.category as unknown as ItineraryActivity['type'],
       notes:    form.notes.trim() || undefined,
       dateEnd:  form.multiDay && form.dateEnd && form.dateEnd !== dayDateStr
         ? form.dateEnd
@@ -952,9 +867,6 @@ export default function Itinerary() {
         ...d,
         activities: (d.activities as RichActivity[]).map(a => {
           if (a.id !== activityId) return a;
-          // Toggle against the *effective* (clock-aware) status, not just the
-          // raw stored field — otherwise tapping an activity the clock has
-          // already auto-completed would silently no-op instead of un-completing it.
           const effective = detectStatus(a, d.date);
           return { ...a, status: (effective === 'completed' ? 'upcoming' : 'completed') as ActivityStatus };
         }),
@@ -982,11 +894,9 @@ export default function Itinerary() {
   if (!trip) {
     return (
       <div className="flex flex-col items-center justify-center h-full px-8 text-center py-20">
-        <motion.div
-          className="text-5xl mb-4"
-          animate={{ y: [0, -10, 0] }}
-          transition={{ repeat: Infinity, duration: 3 }}
-        >🗺️</motion.div>
+        <motion.div className="text-5xl mb-4" animate={{ y: [0, -10, 0] }} transition={{ repeat: Infinity, duration: 3 }}>
+          🗺️
+        </motion.div>
         <h2 className="text-lg font-black text-slate-900 mb-1">No trip yet</h2>
         <p className="text-sm text-slate-400">Create a trip first to start building your itinerary.</p>
       </div>
@@ -1007,14 +917,43 @@ export default function Itinerary() {
   return (
     <div className="min-h-screen pb-28 w-full overflow-x-hidden" style={{ background: '#F8FAFC' }}>
 
+      {/* ── Save status indicators ── */}
+      <AnimatePresence>
+        {saving && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="fixed top-4 right-16 z-50 bg-violet-50 border border-violet-200 rounded-2xl px-3 py-2 text-xs text-violet-600 font-semibold flex items-center gap-1.5 shadow-sm"
+          >
+            <div className="w-3 h-3 rounded-full border-2 border-violet-300 border-t-violet-600 animate-spin" />
+            Saving…
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {saveError && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="fixed top-4 left-4 right-4 z-50 bg-rose-50 border border-rose-200 rounded-2xl px-4 py-3 text-xs text-rose-600 font-semibold flex items-center gap-2 shadow-sm"
+          >
+            <AlertTriangle size={14} className="flex-shrink-0" />
+            Save failed — check your connection and try again.
+            <button onClick={() => setSaveError(null)} className="ml-auto text-rose-400 hover:text-rose-600">
+              <X size={14} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Decorative background blobs */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
-        <div className="absolute -top-16 -right-16 w-56 h-56 rounded-full opacity-[0.13]"
-          style={{ background: '#7C5CFF' }} />
-        <div className="absolute top-80 -left-12 w-40 h-40 rounded-full opacity-[0.10]"
-          style={{ background: '#FFB7E1' }} />
-        <div className="absolute bottom-40 -right-10 w-32 h-32 rounded-full opacity-[0.08]"
-          style={{ background: '#C7E9FF' }} />
+        <div className="absolute -top-16 -right-16 w-56 h-56 rounded-full opacity-[0.13]" style={{ background: '#7C5CFF' }} />
+        <div className="absolute top-80 -left-12 w-40 h-40 rounded-full opacity-[0.10]" style={{ background: '#FFB7E1' }} />
+        <div className="absolute bottom-40 -right-10 w-32 h-32 rounded-full opacity-[0.08]" style={{ background: '#C7E9FF' }} />
       </div>
 
       {/* ── Header ── */}
@@ -1030,7 +969,6 @@ export default function Itinerary() {
               {totalActivities} {totalActivities === 1 ? 'activity' : 'activities'} planned
             </p>
           </div>
-          {/* Peeping kitten avatar */}
           <motion.div
             className="w-14 h-14 rounded-2xl flex items-center justify-center overflow-hidden flex-shrink-0"
             style={{ background: 'linear-gradient(135deg, #ede8ff, #ffd6f0)' }}
@@ -1076,7 +1014,7 @@ export default function Itinerary() {
         </div>
       </div>
 
-      {/* ── Day progress (only if there are activities) ── */}
+      {/* ── Day progress ── */}
       {day && day.activities.length > 0 && (
         <DayProgress total={day.activities.length} completed={completedCount} />
       )}
@@ -1112,7 +1050,6 @@ export default function Itinerary() {
         <EmptyItinerary isPast={isDayInPast} onAdd={openAddModal} />
       ) : (
         <div className="px-4 sm:px-6">
-          {/* Vertical connecting line */}
           <div className="relative">
             <div
               className="absolute left-[10px] top-3 bottom-3 w-0.5 rounded-full"

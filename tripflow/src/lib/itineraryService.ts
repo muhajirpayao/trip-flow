@@ -11,6 +11,7 @@ export interface ItineraryActivity {
   category?: string;
   status?:   string;
   notes?:    string;
+  dateEnd?:  string;
 }
 
 export interface ItineraryDay {
@@ -28,7 +29,11 @@ export async function loadItinerary(tripId: string): Promise<ItineraryDay[] | nu
       .eq('trip_id', tripId)
       .order('date');
 
-    if (dErr || !days?.length) return null;
+    if (dErr) {
+      console.error('[itineraryService] loadItinerary days error', dErr);
+      return null;
+    }
+    if (!days?.length) return null;
 
     const dayIds = days.map((d: any) => d.id);
 
@@ -38,7 +43,10 @@ export async function loadItinerary(tripId: string): Promise<ItineraryDay[] | nu
       .in('day_id', dayIds)
       .order('time');
 
-    if (aErr) return null;
+    if (aErr) {
+      console.error('[itineraryService] loadItinerary activities error', aErr);
+      return null;
+    }
 
     return days.map((day: any) => ({
       date: day.date,
@@ -50,15 +58,15 @@ export async function loadItinerary(tripId: string): Promise<ItineraryDay[] | nu
           timeEnd:  a.time_end  ?? undefined,
           title:    a.title,
           location: a.location  ?? undefined,
-          // BUG FIX: prefer `category`, fall back to `type` so old rows still work
           category: a.category  ?? a.type ?? undefined,
           type:     a.type      ?? a.category ?? '',
           status:   a.status    ?? undefined,
           notes:    a.notes     ?? undefined,
+          dateEnd:  a.date_end  ?? undefined,
         })),
     }));
   } catch (err) {
-    console.error('[itineraryService] loadItinerary error', err);
+    console.error('[itineraryService] loadItinerary unexpected error', err);
     return null;
   }
 }
@@ -68,10 +76,10 @@ export async function loadItinerary(tripId: string): Promise<ItineraryDay[] | nu
 export async function saveItinerary(
   tripId: string,
   days: ItineraryDay[]
-): Promise<void> {
+): Promise<{ success: boolean; error?: string }> {
   try {
     for (const day of days) {
-      // Upsert the day row and get its id back
+      // 1. Upsert the day row and get its id back
       const { data: dayRow, error: dErr } = await supabase
         .from('itinerary_days')
         .upsert(
@@ -83,13 +91,12 @@ export async function saveItinerary(
 
       if (dErr || !dayRow) {
         console.error('[itineraryService] day upsert failed', dErr);
-        continue;
+        return { success: false, error: `Day upsert failed: ${dErr?.message}` };
       }
 
       const dayId = dayRow.id;
 
-      // BUG FIX: only delete activities that belong to THIS day,
-      // then re-insert — avoids wiping rows before the upsert lands.
+      // 2. Delete existing activities for this day only
       const { error: delErr } = await supabase
         .from('itinerary_activities')
         .delete()
@@ -97,16 +104,13 @@ export async function saveItinerary(
 
       if (delErr) {
         console.error('[itineraryService] activity delete failed', delErr);
-        continue;
+        return { success: false, error: `Activity delete failed: ${delErr?.message}` };
       }
 
+      // 3. Skip insert if no activities
       if (!day.activities.length) continue;
 
       const rows = day.activities.map((a, i) => ({
-        // BUG FIX: don't include `id` in the insert so Supabase generates a
-        // stable uuid. If you want client-side ids, keep the line below —
-        // but make sure your table's `id` column has no default (gen_random_uuid)
-        // that conflicts with the client value.
         id:         a.id,
         day_id:     dayId,
         trip_id:    tripId,
@@ -114,25 +118,27 @@ export async function saveItinerary(
         time_end:   a.timeEnd  ?? null,
         title:      a.title,
         location:   a.location ?? null,
-        // BUG FIX: always write both columns so neither is null after save
         category:   a.category ?? a.type ?? null,
         type:       a.type     ?? a.category ?? null,
         status:     a.status   ?? null,
         notes:      a.notes    ?? null,
+        date_end:   a.dateEnd  ?? null,
         sort_order: i,
       }));
 
-      // BUG FIX: use insert (not upsert) after a clean delete —
-      // avoids the duplicate-key conflicts that silently swallow rows.
       const { error: aErr } = await supabase
         .from('itinerary_activities')
         .insert(rows);
 
       if (aErr) {
         console.error('[itineraryService] activity insert failed', aErr);
+        return { success: false, error: `Activity insert failed: ${aErr?.message}` };
       }
     }
-  } catch (err) {
-    console.error('[itineraryService] saveItinerary error', err);
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('[itineraryService] saveItinerary unexpected error', err);
+    return { success: false, error: err?.message ?? 'Unknown error' };
   }
 }

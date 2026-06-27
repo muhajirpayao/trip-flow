@@ -64,6 +64,7 @@ export default function Dashboard() {
         </button>
         {showOnboarding && <OnboardingWizard onClose={() => setShowOnboarding(false)} />}
       </div>
+      
     );
   }
 
@@ -135,6 +136,7 @@ export default function Dashboard() {
     >
       {/* Decorative background blobs */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        
         <div className="absolute -top-16 -right-16 w-52 h-52 rounded-full opacity-[0.11]"
           style={{ background: '#7C5CFF' }} />
         <div className="absolute bottom-40 -left-10 w-36 h-36 rounded-full opacity-[0.08]"
@@ -144,6 +146,7 @@ export default function Dashboard() {
       </div>
 
       {/* ── Header ── */}
+      
       <div
         className="pt-12 pb-20 px-4 sm:px-5 relative overflow-hidden"
         style={{ background: 'linear-gradient(135deg, #7C5CFF 0%, #8B5CF6 100%)' }}
