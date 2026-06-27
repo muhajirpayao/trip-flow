@@ -48,9 +48,13 @@ type RichActivity = ItineraryActivity & {
   status?:   ActivityStatus;
   notes?:    string;
   location?: string;
+  /** ISO date (yyyy-mm-dd). Set when an activity spans more than one day
+   *  (e.g. a hotel stay or a flight that lands the next day). When absent
+   *  or equal to the day it lives on, the activity is treated as single-day. */
+  dateEnd?:  string;
 };
 
-// ─── Time helpers ──────────────────────────────────────────────────────────────
+// ─── Time / date helpers ───────────────────────────────────────────────────────
 
 function to12h(t: string): string {
   const [hStr, mStr] = t.split(':');
@@ -83,11 +87,32 @@ function nowTime() {
 function todayDate() { return new Date().toISOString().slice(0, 10); }
 function isDayPast(d: string) { return d < todayDate(); }
 
+function addDays(dateStr: string, n: number) {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Resolves the *effective* status of an activity.
+ *
+ * Rule: an explicit user choice (tapping the checkbox) always wins, in
+ * either direction — that's what lets someone un-complete something even
+ * after its time has passed, or check something off early. Only when there
+ * is no explicit choice do we fall back to auto-detecting from the clock,
+ * which is what makes activities automatically flip to "Completed" once
+ * their end time passes, and automatically flip to "In Progress" when
+ * they're currently happening.
+ */
 function detectStatus(activity: RichActivity, dayDate: string): ActivityStatus {
-  if (activity.status === 'completed') return 'completed';
+  if (activity.status === 'completed' || activity.status === 'upcoming') {
+    return activity.status;
+  }
+
   const today = todayDate();
   if (dayDate < today) return 'completed';
   if (dayDate > today) return 'upcoming';
+
   const now = nowTime();
   if (activity.time <= now && (!activity.timeEnd || activity.timeEnd >= now)) return 'inprogress';
   if ((activity.timeEnd ?? activity.time) < now) return 'completed';
@@ -131,11 +156,16 @@ type FormState = {
   location:  string;
   category:  CategoryKey;
   notes:     string;
+  /** Whether the date-range picker is active for this activity. */
+  multiDay:  boolean;
+  /** ISO end date. Equals the day's own date when not multi-day. */
+  dateEnd:   string;
 };
 
 const BLANK_FORM: FormState = {
   timeStart: '09:00', timeEnd: '10:00', title: '',
   location: '', category: 'sightseeing', notes: '',
+  multiDay: false, dateEnd: '',
 };
 
 // ─── Day Progress bar ──────────────────────────────────────────────────────────
@@ -212,6 +242,7 @@ function ActivityCard({
   const status = detectStatus(activity, dayDate);
   const st     = STATUS_STYLES[status];
   const isDone = status === 'completed';
+  const isMultiDay = !!activity.dateEnd && activity.dateEnd !== dayDate;
 
   // Timeline node color
   const nodeStyle =
@@ -240,7 +271,7 @@ function ActivityCard({
 
       {/* Card */}
       <motion.div
-        className={`flex-1 rounded-3xl border p-3.5 sm:p-4 transition-all duration-300 ${
+        className={`flex-1 min-w-0 rounded-3xl border p-3.5 sm:p-4 transition-all duration-300 overflow-hidden ${
           isDone
             ? 'bg-white/60 border-slate-100 opacity-60'
             : 'bg-white border-slate-100 shadow-[0_4px_20px_rgba(124,92,255,0.07)]'
@@ -255,25 +286,35 @@ function ActivityCard({
           </div>
 
           <div className="min-w-0 flex-1">
+            {/* Multi-day date range (only shown when this activity spans more than one day) */}
+            {isMultiDay && (
+              <div className="flex items-center gap-1.5 text-[10px] font-black text-violet-500 mb-1 min-w-0">
+                <CalendarIcon size={11} className="flex-shrink-0" />
+                <span className="truncate">{fmtDate(dayDate)} – {fmtDate(activity.dateEnd as string)}</span>
+              </div>
+            )}
             {/* Time */}
             <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 mb-0.5">
-              <Clock size={11} />
+              <Clock size={11} className="flex-shrink-0" />
               {fmtTimeRange(activity.time, activity.timeEnd)}
             </div>
-            {/* Title */}
-            <h3 className={`text-sm font-black text-slate-900 truncate ${isDone ? 'line-through text-slate-400' : ''}`}>
+            {/* Title — wraps up to 2 lines instead of overflowing, so long titles never spill into neighboring elements */}
+            <h3
+              className={`text-sm font-black text-slate-900 break-words leading-snug ${isDone ? 'line-through text-slate-400' : ''}`}
+              style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+            >
               {activity.title}
             </h3>
             {/* Location */}
             {activity.location && (
-              <div className="flex items-center gap-1 text-xs text-slate-400 mt-0.5">
+              <div className="flex items-center gap-1 text-xs text-slate-400 mt-0.5 min-w-0">
                 <MapPin size={11} className="flex-shrink-0" />
-                <span className="truncate">{activity.location}</span>
+                <span className="truncate min-w-0">{activity.location}</span>
               </div>
             )}
             {/* Notes */}
             {activity.notes && (
-              <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">{activity.notes}</p>
+              <p className="text-xs text-slate-400 mt-1.5 leading-relaxed break-words">{activity.notes}</p>
             )}
             {/* Status + badge row */}
             <div className="flex items-center gap-2 mt-2 flex-wrap">
@@ -465,6 +506,7 @@ function ActivityModal({
   isEditing,
   activeDay,
   dayWeekday,
+  dayDateStr,
   form,
   setForm,
   onSave,
@@ -476,6 +518,8 @@ function ActivityModal({
   isEditing:    boolean;
   activeDay:    number;
   dayWeekday:   string;
+  /** ISO date of the day this modal was opened from — the start date of the activity. */
+  dayDateStr:   string;
   form:         FormState;
   setForm:      React.Dispatch<React.SetStateAction<FormState>>;
   onSave:       () => void;
@@ -606,6 +650,62 @@ function ActivityModal({
             </p>
           </div>
 
+          {/* Multi-day toggle — for hotel stays, flights, multi-day tours */}
+          <div>
+            <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50/70 border border-slate-200">
+              <div className="pr-3">
+                <p className="text-xs font-bold text-slate-600">Spans multiple days</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">e.g. a hotel stay or a flight that lands the next day</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={form.multiDay}
+                onClick={() => setForm(f => {
+                  const turningOn = !f.multiDay;
+                  return {
+                    ...f,
+                    multiDay: turningOn,
+                    dateEnd: turningOn ? addDays(dayDateStr, 1) : dayDateStr,
+                  };
+                })}
+                className={`w-11 h-6 rounded-full relative flex-shrink-0 transition-colors ${form.multiDay ? 'bg-violet-500' : 'bg-slate-200'}`}
+              >
+                <motion.span
+                  className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow"
+                  animate={{ x: form.multiDay ? 20 : 0 }}
+                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                />
+              </button>
+            </div>
+
+            <AnimatePresence initial={false}>
+              {form.multiDay && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="pt-3">
+                    <label className="text-xs font-bold text-slate-500 mb-1.5 block" htmlFor="act-date-end">Ends on</label>
+                    <input
+                      id="act-date-end"
+                      type="date"
+                      min={dayDateStr}
+                      value={form.dateEnd || dayDateStr}
+                      onChange={e => setForm(f => ({ ...f, dateEnd: e.target.value }))}
+                      className="w-full px-4 py-3 rounded-2xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-violet-400 bg-slate-50/50 transition-colors"
+                    />
+                    <p className="text-[11px] text-violet-500 font-bold mt-1.5 text-right">
+                      {fmtDate(dayDateStr)} – {fmtDate(form.dateEnd || dayDateStr)}
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
           {/* Location */}
           <div>
             <label className="text-xs font-bold text-slate-500 mb-1.5 block" htmlFor="act-loc">Location (optional)</label>
@@ -723,6 +823,8 @@ export default function Itinerary() {
   const [form,         setForm]         = useState<FormState>(BLANK_FORM);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
+  // Re-render once a minute so statuses (in-progress / auto-completed) stay
+  // in sync with the clock without the user needing to refresh anything.
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 60_000);
@@ -750,11 +852,14 @@ export default function Itinerary() {
   const endOpts     = buildTimeOptions(form.timeStart);
   const isEditing   = modalMode !== null && modalMode !== 'add';
 
+  // Completed count now shares the exact same status logic as each card,
+  // so the progress bar, the daily summary, and the checkmarks on cards can
+  // never disagree with each other — and all three auto-update once an
+  // activity's end time passes.
   const completedCount = useMemo(() => {
     if (!day) return 0;
     return (day.activities as RichActivity[]).filter(
-      a => (a.status === 'completed') || isDayPast(day.date) ||
-        (day.date === todayDate() && (a.timeEnd ?? a.time) < nowTime())
+      a => detectStatus(a, day.date) === 'completed'
     ).length;
   }, [day]);
 
@@ -778,6 +883,8 @@ export default function Itinerary() {
       ...BLANK_FORM,
       timeStart: slot,
       timeEnd: `${String(endH).padStart(2, '0')}:${String(sm).padStart(2, '0')}`,
+      multiDay: false,
+      dateEnd: day?.date ?? '',
     });
     setModalMode('add');
   };
@@ -793,6 +900,8 @@ export default function Itinerary() {
         ? (activity.type as unknown as CategoryKey)
         : 'sightseeing';
 
+    const hasDateRange = !!activity.dateEnd && activity.dateEnd !== day?.date;
+
     setForm({
       timeStart: activity.time,
       timeEnd:   activity.timeEnd ?? activity.time,
@@ -800,12 +909,15 @@ export default function Itinerary() {
       location:  activity.location ?? '',
       category:  resolvedCategory,
       notes:     activity.notes ?? '',
+      multiDay:  hasDateRange,
+      dateEnd:   hasDateRange ? (activity.dateEnd as string) : (day?.date ?? ''),
     });
     setModalMode(activity.id);
   };
 
   const handleSave = () => {
     if (!form.title.trim()) return;
+    const dayDateStr = day?.date ?? '';
     const base = {
       time:     form.timeStart,
       timeEnd:  form.timeEnd,
@@ -814,6 +926,9 @@ export default function Itinerary() {
       category: form.category,                              // new field — always written
       type:     form.category as unknown as ItineraryActivity['type'], // legacy compat
       notes:    form.notes.trim() || undefined,
+      dateEnd:  form.multiDay && form.dateEnd && form.dateEnd !== dayDateStr
+        ? form.dateEnd
+        : undefined,
     };
 
     const next = days.map((d, i) => {
@@ -835,11 +950,14 @@ export default function Itinerary() {
       if (i !== activeDay) return d;
       return {
         ...d,
-        activities: (d.activities as RichActivity[]).map(a =>
-          a.id === activityId
-            ? { ...a, status: (a.status === 'completed' ? 'upcoming' : 'completed') as ActivityStatus }
-            : a
-        ),
+        activities: (d.activities as RichActivity[]).map(a => {
+          if (a.id !== activityId) return a;
+          // Toggle against the *effective* (clock-aware) status, not just the
+          // raw stored field — otherwise tapping an activity the clock has
+          // already auto-completed would silently no-op instead of un-completing it.
+          const effective = detectStatus(a, d.date);
+          return { ...a, status: (effective === 'completed' ? 'upcoming' : 'completed') as ActivityStatus };
+        }),
       };
     });
     persist(next);
@@ -1037,6 +1155,7 @@ export default function Itinerary() {
             isEditing={isEditing}
             activeDay={activeDay}
             dayWeekday={dayWeekday}
+            dayDateStr={day?.date ?? ''}
             form={form}
             setForm={setForm}
             onSave={handleSave}
