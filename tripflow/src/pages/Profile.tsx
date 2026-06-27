@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useTrip } from '../context/TripContext';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 import {
   User, Bell, Palette, DollarSign, ChevronRight,
   LogOut, Trash2, Download, CheckCircle2, X,
@@ -27,14 +29,9 @@ interface AppVersion {
   changelog: { version: string; date: string; notes: string[] }[];
 }
 
-// ─── Mock data (replace with real auth / store hooks) ─────────────────────────
-
-const MOCK_USER = {
-  name:   'Muhajir Payao',
-  email:  'muhajir@example.com',
-  avatar: '', // empty = initials fallback
-  joined: 'June 2026',
-};
+// ─── Mock data — only used for sections not wired up yet ──────────────────────
+// (App version / changelog / theme / currency / notifications are still
+// placeholders. Name, email, trip overview, and logout below are real.)
 
 const MOCK_VERSION: AppVersion = {
   current: '1.3.0',
@@ -134,14 +131,69 @@ function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
 
 export default function Profile() {
   const { trip, clearTrip, deleteTrip } = useTrip();
+  const { user, signOut } = useAuth();
   const navigate = useNavigate();
 
-  // User edit state
-  const [user, setUser]         = useState(MOCK_USER);
-  const [editingName, setEditingName] = useState(false);
-  const [nameInput, setNameInput]     = useState(user.name);
+  // ── Real user info ──────────────────────────────────────────────────────────
+  // Email comes straight from Supabase auth — never editable.
+  const email = user?.email ?? '';
 
-  // Settings
+  // Display name lives on the `trips` row (trips.display_name) per your schema.
+  // Falls back to the email's local part if no trip/name exists yet.
+  const [displayName, setDisplayName] = useState(
+    trip?.display_name || email.split('@')[0] || 'Traveler'
+  );
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput]     = useState(displayName);
+  const [savingName, setSavingName]   = useState(false);
+  const [nameError, setNameError]     = useState<string | null>(null);
+
+  // Keep local state in sync if the trip loads/changes after mount
+  useEffect(() => {
+    if (trip?.display_name) setDisplayName(trip.display_name);
+  }, [trip?.display_name]);
+
+  const initials = displayName
+    .split(' ')
+    .filter(Boolean)
+    .map(w => w[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2) || 'U';
+
+  const handleSaveName = async () => {
+    const next = nameInput.trim();
+    if (!next || next === displayName) {
+      setEditingName(false);
+      return;
+    }
+    if (!trip?.id) {
+      // No trip yet to attach the name to — just reflect it locally.
+      setDisplayName(next);
+      setEditingName(false);
+      return;
+    }
+
+    setSavingName(true);
+    setNameError(null);
+    const { error } = await supabase
+      .from('trips')
+      .update({ display_name: next })
+      .eq('id', trip.id);
+    setSavingName(false);
+
+    if (error) {
+      setNameError('Could not save name. Try again.');
+      return;
+    }
+
+    setDisplayName(next);
+    setEditingName(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1800);
+  };
+
+  // ── Settings (placeholders — not wired up yet) ─────────────────────────────
   const [settings, setSettings] = useState<AppSettings>({
     theme:              'system',
     currency:           'USD',
@@ -150,42 +202,38 @@ export default function Profile() {
     reminderDaysBefore: 3,
   });
 
-  // UI state
+  // ── UI state ────────────────────────────────────────────────────────────────
   const [showChangelog, setShowChangelog]   = useState(false);
   const [updating, setUpdating]             = useState(false);
   const [updated, setUpdated]               = useState(false);
   const [confirmLogout, setConfirmLogout]   = useState(false);
   const [confirmDelete, setConfirmDelete]   = useState(false);
   const [deleting, setDeleting]             = useState(false);
+  const [loggingOut, setLoggingOut]         = useState(false);
   const [saved, setSaved]                   = useState(false);
 
   const hasUpdate = MOCK_VERSION.current !== MOCK_VERSION.latest;
 
-  const initials = user.name
-    .split(' ')
-    .map(w => w[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
-
   const set = <K extends keyof AppSettings>(k: K, v: AppSettings[K]) => {
     setSettings(s => ({ ...s, [k]: v }));
-    // Show saved toast
     setSaved(true);
     setTimeout(() => setSaved(false), 1800);
   };
 
   const handleUpdate = async () => {
     setUpdating(true);
-    await new Promise(r => setTimeout(r, 2200)); // replace with real update call
+    await new Promise(r => setTimeout(r, 2200)); // placeholder — not real yet
     setUpdating(false);
     setUpdated(true);
     setTimeout(() => setUpdated(false), 3000);
   };
 
-  const handleSaveName = () => {
-    if (nameInput.trim()) setUser(u => ({ ...u, name: nameInput.trim() }));
-    setEditingName(false);
+  // ── Real logout ─────────────────────────────────────────────────────────────
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    await signOut();
+    clearTrip?.();
+    navigate('/');
   };
 
   const handleDeleteAccount = async () => {
@@ -196,13 +244,13 @@ export default function Profile() {
     navigate('/');
   };
 
-  // ── Trip recent changes summary ──────────────────────────────────────────────
+  // ── Trip overview (real, from TripContext) ─────────────────────────────────
   const tripChanges = trip
     ? [
         `Destination: ${trip.destination}`,
-        `Dates: ${trip.startDate} → ${trip.endDate}`,
+        `Dates: ${trip.start_date} → ${trip.end_date}`,
         `Budget: ${trip.budget} ${trip.currency}`,
-        `Travel type: ${trip.travelType}`,
+        `Travel type: ${trip.travel_type}`,
       ]
     : [];
 
@@ -243,11 +291,7 @@ export default function Profile() {
               className="w-16 h-16 rounded-2xl flex items-center justify-center text-xl font-black text-white flex-shrink-0"
               style={{ background: 'linear-gradient(135deg, #7C5CFF, #FFB7E1)' }}
             >
-              {user.avatar ? (
-                <img src={user.avatar} alt={user.name} className="w-full h-full object-cover rounded-2xl" />
-              ) : (
-                initials
-              )}
+              {initials}
             </div>
 
             {/* Name / email */}
@@ -259,42 +303,39 @@ export default function Profile() {
                     value={nameInput}
                     onChange={e => setNameInput(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && handleSaveName()}
-                    className="flex-1 text-sm font-bold border-b-2 border-violet-400 bg-transparent focus:outline-none text-slate-900 py-0.5"
+                    disabled={savingName}
+                    className="flex-1 text-sm font-bold border-b-2 border-violet-400 bg-transparent focus:outline-none text-slate-900 py-0.5 disabled:opacity-60"
                   />
                   <button
                     onClick={handleSaveName}
-                    className="text-[11px] font-bold text-violet-600 bg-violet-50 px-2.5 py-1 rounded-full"
+                    disabled={savingName}
+                    className="text-[11px] font-bold text-violet-600 bg-violet-50 px-2.5 py-1 rounded-full disabled:opacity-60"
                   >
-                    Save
+                    {savingName ? 'Saving…' : 'Save'}
                   </button>
-                  <button onClick={() => setEditingName(false)}>
+                  <button onClick={() => { setEditingName(false); setNameError(null); }} disabled={savingName}>
                     <X size={14} className="text-slate-400" />
                   </button>
                 </div>
               ) : (
                 <button
-                  onClick={() => { setNameInput(user.name); setEditingName(true); }}
+                  onClick={() => { setNameInput(displayName); setEditingName(true); }}
                   className="text-left group w-full"
                 >
                   <p className="text-base font-black text-slate-900 group-hover:text-violet-600 transition-colors">
-                    {user.name}
+                    {displayName}
                   </p>
                   <p className="text-[11px] text-violet-400 font-semibold mt-0.5">Tap to edit name</p>
                 </button>
               )}
-              <p className="text-xs text-slate-400 mt-1 truncate">{user.email}</p>
-            </div>
-
-            {/* Member since */}
-            <div className="text-right flex-shrink-0">
-              <p className="text-[10px] text-slate-400">Member since</p>
-              <p className="text-xs font-bold text-slate-600">{user.joined}</p>
+              {nameError && <p className="text-[11px] text-rose-500 mt-1">{nameError}</p>}
+              <p className="text-xs text-slate-400 mt-1 truncate">{email}</p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* ── Update banner (if update available) ── */}
+      {/* ── Update banner (placeholder, not real yet) ── */}
       {hasUpdate && !updated && (
         <div className="px-4 sm:px-6 mb-1">
           <motion.div
@@ -336,7 +377,7 @@ export default function Profile() {
         </div>
       )}
 
-      {/* ── App version & changelog ── */}
+      {/* ── App version & changelog (placeholder) ── */}
       <SectionHeader title="App version" />
       <div className="mx-4 sm:mx-6 bg-white rounded-2xl shadow-[0_2px_12px_rgba(0,0,0,0.05)] overflow-hidden divide-y divide-slate-50">
         <SettingRow
@@ -365,7 +406,7 @@ export default function Profile() {
         </button>
       </div>
 
-      {/* ── Trip update overview ── */}
+      {/* ── Trip overview (real, from TripContext) ── */}
       {trip && (
         <>
           <SectionHeader title="Trip overview" sub="Current trip settings at a glance" />
@@ -392,7 +433,7 @@ export default function Profile() {
         </>
       )}
 
-      {/* ── Appearance ── */}
+      {/* ── Appearance (placeholder) ── */}
       <SectionHeader title="Appearance" />
       <div className="mx-4 sm:mx-6 bg-white rounded-2xl shadow-[0_2px_12px_rgba(0,0,0,0.05)] p-4">
         <p className="text-xs font-bold text-slate-400 mb-2 flex items-center gap-1.5">
@@ -416,10 +457,9 @@ export default function Profile() {
         </div>
       </div>
 
-      {/* ── Preferences ── */}
+      {/* ── Preferences (placeholder) ── */}
       <SectionHeader title="Preferences" />
       <div className="mx-4 sm:mx-6 bg-white rounded-2xl shadow-[0_2px_12px_rgba(0,0,0,0.05)] overflow-hidden divide-y divide-slate-50">
-        {/* Currency */}
         <div className="flex items-center gap-3 px-4 py-3">
           <div className="w-8 h-8 rounded-xl bg-emerald-50 flex items-center justify-center flex-shrink-0">
             <DollarSign size={15} className="text-emerald-500" />
@@ -436,7 +476,6 @@ export default function Profile() {
           </select>
         </div>
 
-        {/* Reminder days */}
         <div className="flex items-center gap-3 px-4 py-3">
           <div className="w-8 h-8 rounded-xl bg-sky-50 flex items-center justify-center flex-shrink-0">
             <Clock size={15} className="text-sky-500" />
@@ -455,7 +494,7 @@ export default function Profile() {
         </div>
       </div>
 
-      {/* ── Notifications ── */}
+      {/* ── Notifications (placeholder) ── */}
       <SectionHeader title="Notifications" />
       <div className="mx-4 sm:mx-6 bg-white rounded-2xl shadow-[0_2px_12px_rgba(0,0,0,0.05)] overflow-hidden divide-y divide-slate-50">
         <SettingRow
@@ -474,13 +513,13 @@ export default function Profile() {
         />
       </div>
 
-      {/* ── Account actions ── */}
+      {/* ── Account actions (logout real, delete still placeholder-ish) ── */}
       <SectionHeader title="Account" />
       <div className="mx-4 sm:mx-6 bg-white rounded-2xl shadow-[0_2px_12px_rgba(0,0,0,0.05)] overflow-hidden divide-y divide-slate-50">
         <SettingRow
           icon={User}
           label="Account info"
-          sub={user.email}
+          sub={email}
           iconColor="bg-violet-50 text-violet-500"
           action={<ChevronRight size={15} className="text-slate-300" />}
         />
@@ -524,7 +563,7 @@ export default function Profile() {
         )}
       </AnimatePresence>
 
-      {/* ── Changelog sheet ── */}
+      {/* ── Changelog sheet (placeholder) ── */}
       <AnimatePresence>
         {showChangelog && (
           <motion.div
@@ -584,13 +623,13 @@ export default function Profile() {
         )}
       </AnimatePresence>
 
-      {/* ── Logout confirm ── */}
+      {/* ── Logout confirm (real) ── */}
       <AnimatePresence>
         {confirmLogout && (
           <motion.div
             className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={() => setConfirmLogout(false)}
+            onClick={() => !loggingOut && setConfirmLogout(false)}
           >
             <motion.div
               className="w-full max-w-screen-md bg-white rounded-t-3xl p-5 pb-10"
@@ -609,13 +648,13 @@ export default function Profile() {
                 </div>
               </div>
               <div className="flex gap-3">
-                <button onClick={() => setConfirmLogout(false)}
-                  className="flex-1 py-3 rounded-full bg-slate-100 text-slate-600 font-bold text-sm">
+                <button onClick={() => setConfirmLogout(false)} disabled={loggingOut}
+                  className="flex-1 py-3 rounded-full bg-slate-100 text-slate-600 font-bold text-sm disabled:opacity-50">
                   Cancel
                 </button>
-                <button onClick={() => { clearTrip?.(); navigate('/'); }}
-                  className="flex-1 py-3 rounded-full bg-slate-800 text-white font-bold text-sm">
-                  Log out
+                <button onClick={handleLogout} disabled={loggingOut}
+                  className="flex-1 py-3 rounded-full bg-slate-800 text-white font-bold text-sm disabled:opacity-50">
+                  {loggingOut ? 'Logging out…' : 'Log out'}
                 </button>
               </div>
             </motion.div>
