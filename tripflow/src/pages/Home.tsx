@@ -161,13 +161,6 @@ export default function Home() {
             </div>
             <span className="text-white font-black text-lg tracking-tight">TripFlow</span>
           </div>
-          <button
-            onClick={async () => { await signOut(); navigate('/auth'); }}
-            className="flex items-center gap-1.5 text-white/60 hover:text-white text-xs font-semibold transition-colors"
-          >
-            <LogOut size={13} />
-            Sign out
-          </button>
         </div>
 
         {/* Greeting */}

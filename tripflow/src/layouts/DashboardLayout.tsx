@@ -52,11 +52,12 @@ export default function DashboardLayout() {
       </main>
 
       {/* Bottom navigation */}
-<nav
-  className={`fixed bottom-4 left-4 right-4 h-14 bg-white rounded-full shadow-lg shadow-slate-200/60 border border-slate-100 flex items-center z-30 px-2 transition-all duration-300 ease-in-out ${
-    hidden ? 'translate-y-24 opacity-0' : 'translate-y-0 opacity-100'
-  }`}
->
+      <nav
+        className={`fixed bottom-4 left-4 right-4 h-14 rounded-full shadow-lg shadow-violet-900/20 flex items-center z-30 px-2 transition-all duration-300 ease-in-out ${
+          hidden ? 'translate-y-24 opacity-0' : 'translate-y-0 opacity-100'
+        }`}
+        style={{ background: 'linear-gradient(135deg, #7C5CFF 0%, #8B5CF6 100%)' }}
+      >
         {NAV_ITEMS.map(({ to, icon: Icon, label, end }) => (
           <NavLink
             key={to}
@@ -68,7 +69,7 @@ export default function DashboardLayout() {
             {({ isActive }) => (
               <div
                 className={`p-2.5 rounded-xl transition-colors -translate-y-0.5 ${
-                  isActive ? 'bg-violet-50 text-violet-600' : 'text-slate-400 hover:text-slate-600'
+                  isActive ? 'bg-white/20 text-white' : 'text-white/60 hover:text-white/90'
                 }`}
               >
                 <Icon size={22} strokeWidth={isActive ? 2.5 : 1.8} />
