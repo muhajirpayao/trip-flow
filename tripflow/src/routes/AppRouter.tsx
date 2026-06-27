@@ -17,7 +17,7 @@ const Profile    = lazy(() => import('../pages/Profile'));
 const Settings   = lazy(() => import('../pages/Settings'));
 
 // Flip this to false when you're ready to launch the real app.
-const UNDER_DEVELOPMENT = true;
+const UNDER_DEVELOPMENT = false;
 
 const Loader = () => (
   <div className="min-h-screen flex items-center justify-center bg-slate-50">

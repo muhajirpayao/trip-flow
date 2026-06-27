@@ -19,6 +19,32 @@ export interface ItineraryDay {
   activities: ItineraryActivity[];
 }
 
+// ── Helpers: convert between "HH:MM" and full ISO timestamp ───────
+// Supabase treats time/time_end as timestamptz, so we store a full
+// timestamp and extract the time part when loading.
+
+const DUMMY_DATE = '2000-01-01'; // fixed date, only the time part matters
+
+function timeToISO(time: string): string {
+  // "21:15" → "2000-01-01T21:15:00+00:00"
+  return `${DUMMY_DATE}T${time}:00+00:00`;
+}
+
+function isoToTime(iso: string | null | undefined): string | undefined {
+  if (!iso) return undefined;
+  // "2000-01-01T21:15:00+00:00" → "21:15"
+  // Also handles plain "HH:MM" if already converted
+  if (/^\d{2}:\d{2}$/.test(iso)) return iso;
+  try {
+    const d = new Date(iso);
+    const h = String(d.getUTCHours()).padStart(2, '0');
+    const m = String(d.getUTCMinutes()).padStart(2, '0');
+    return `${h}:${m}`;
+  } catch {
+    return iso.slice(0, 5); // fallback: take first 5 chars
+  }
+}
+
 // ── Load ──────────────────────────────────────────────────────────
 
 export async function loadItinerary(tripId: string): Promise<ItineraryDay[] | null> {
@@ -54,8 +80,9 @@ export async function loadItinerary(tripId: string): Promise<ItineraryDay[] | nu
         .filter((a: any) => a.day_id === day.id)
         .map((a: any) => ({
           id:       a.id,
-          time:     a.time,
-          timeEnd:  a.time_end  ?? undefined,
+          // Convert stored ISO timestamp back to "HH:MM"
+          time:     isoToTime(a.time) ?? a.time,
+          timeEnd:  isoToTime(a.time_end),
           title:    a.title,
           location: a.location  ?? undefined,
           category: a.category  ?? a.type ?? undefined,
@@ -72,9 +99,8 @@ export async function loadItinerary(tripId: string): Promise<ItineraryDay[] | nu
 }
 
 // ── Save ──────────────────────────────────────────────────────────
-// Strategy: use a Postgres function (RPC) to bypass PostgREST's
-// stale schema cache issue with timestamptz columns.
-// Falls back to direct insert if RPC not available.
+// Converts HH:MM times to full ISO timestamps so Postgres accepts
+// them in the timestamptz columns without schema changes.
 
 export async function saveItinerary(
   tripId: string,
@@ -98,15 +124,30 @@ export async function saveItinerary(
       }
 
       const dayId = dayRow.id;
+      const keepIds = day.activities.map(a => a.id);
 
-      // 2. Build rows — cast time fields explicitly as strings
+      // 2. Delete activities no longer in the list
+      if (keepIds.length > 0) {
+        await supabase
+          .from('itinerary_activities')
+          .delete()
+          .eq('day_id', dayId)
+          .not('id', 'in', `(${keepIds.join(',')})`);
+      } else {
+        await supabase
+          .from('itinerary_activities')
+          .delete()
+          .eq('day_id', dayId);
+        continue;
+      }
+
+      // 3. Build rows — store time as full ISO timestamp
       const rows = day.activities.map((a, i) => ({
         id:         a.id,
         day_id:     dayId,
         trip_id:    tripId,
-        // Cast to string explicitly to prevent any type coercion
-        time:       String(a.time),
-        time_end:   a.timeEnd  ? String(a.timeEnd)  : null,
+        time:       timeToISO(a.time),
+        time_end:   a.timeEnd ? timeToISO(a.timeEnd) : null,
         title:      a.title,
         location:   a.location ?? null,
         category:   a.category ?? a.type ?? null,
@@ -117,31 +158,14 @@ export async function saveItinerary(
         sort_order: i,
       }));
 
-      // 3. Delete existing activities ONLY after we've verified rows are ready
-      const { error: delErr } = await supabase
+      // 4. Upsert rows
+      const { error: upsertErr } = await supabase
         .from('itinerary_activities')
-        .delete()
-        .eq('day_id', dayId);
+        .upsert(rows, { onConflict: 'id' });
 
-      if (delErr) {
-        console.error('[itineraryService] activity delete failed', delErr);
-        return { success: false, error: `Activity delete failed: ${delErr?.message}` };
-      }
-
-      // 4. Skip insert if no activities
-      if (!day.activities.length) continue;
-
-      // 5. Insert using individual row inserts to bypass schema cache validation
-      //    by going through the REST API with explicit content-type
-      const { error: insErr } = await supabase
-        .from('itinerary_activities')
-        .insert(rows);
-
-      if (insErr) {
-        console.error('[itineraryService] activity insert failed', insErr);
-        // Log the actual rows being sent for debugging
-        console.error('[itineraryService] rows attempted:', JSON.stringify(rows[0]));
-        return { success: false, error: `Activity insert failed: ${insErr?.message}` };
+      if (upsertErr) {
+        console.error('[itineraryService] activity upsert failed', upsertErr);
+        return { success: false, error: `Activity upsert failed: ${upsertErr?.message}` };
       }
     }
 
