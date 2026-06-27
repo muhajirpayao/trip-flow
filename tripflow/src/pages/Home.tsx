@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTrip } from '../context/TripContext';
 import OnboardingWizard from '../components/onboarding/OnboardingWizard';
 import { fmtDate, tripDays, daysUntil } from '../utils';
-import { Plus, MapPin, Calendar, Clock, ChevronRight, Compass, LogOut } from 'lucide-react';
+import { Plus, MapPin, Calendar, Clock, ChevronRight, Compass, } from 'lucide-react';
 import type { Trip } from '../types';
 
 const DESTINATION_COVERS: Record<string, string> = {
@@ -118,7 +118,7 @@ function EmptyState({ onStart }: { onStart: () => void }) {
 }
 
 export default function Home() {
-  const { user, signOut } = useAuth();
+  const { user,} = useAuth();
   const { allTrips, loadingTrips, saveTrip } = useTrip();
   const [showOnboarding, setShowOnboarding] = useState(false);
   const navigate = useNavigate();
