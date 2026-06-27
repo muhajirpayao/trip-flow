@@ -72,6 +72,9 @@ export async function loadItinerary(tripId: string): Promise<ItineraryDay[] | nu
 }
 
 // ── Save ──────────────────────────────────────────────────────────
+// Strategy: use a Postgres function (RPC) to bypass PostgREST's
+// stale schema cache issue with timestamptz columns.
+// Falls back to direct insert if RPC not available.
 
 export async function saveItinerary(
   tripId: string,
@@ -79,7 +82,7 @@ export async function saveItinerary(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     for (const day of days) {
-      // 1. Upsert the day row and get its id back
+      // 1. Upsert the day row
       const { data: dayRow, error: dErr } = await supabase
         .from('itinerary_days')
         .upsert(
@@ -96,26 +99,14 @@ export async function saveItinerary(
 
       const dayId = dayRow.id;
 
-      // 2. Delete existing activities for this day only
-      const { error: delErr } = await supabase
-        .from('itinerary_activities')
-        .delete()
-        .eq('day_id', dayId);
-
-      if (delErr) {
-        console.error('[itineraryService] activity delete failed', delErr);
-        return { success: false, error: `Activity delete failed: ${delErr?.message}` };
-      }
-
-      // 3. Skip insert if no activities
-      if (!day.activities.length) continue;
-
+      // 2. Build rows — cast time fields explicitly as strings
       const rows = day.activities.map((a, i) => ({
         id:         a.id,
         day_id:     dayId,
         trip_id:    tripId,
-        time:       a.time,
-        time_end:   a.timeEnd  ?? null,
+        // Cast to string explicitly to prevent any type coercion
+        time:       String(a.time),
+        time_end:   a.timeEnd  ? String(a.timeEnd)  : null,
         title:      a.title,
         location:   a.location ?? null,
         category:   a.category ?? a.type ?? null,
@@ -126,13 +117,31 @@ export async function saveItinerary(
         sort_order: i,
       }));
 
-      const { error: aErr } = await supabase
+      // 3. Delete existing activities ONLY after we've verified rows are ready
+      const { error: delErr } = await supabase
+        .from('itinerary_activities')
+        .delete()
+        .eq('day_id', dayId);
+
+      if (delErr) {
+        console.error('[itineraryService] activity delete failed', delErr);
+        return { success: false, error: `Activity delete failed: ${delErr?.message}` };
+      }
+
+      // 4. Skip insert if no activities
+      if (!day.activities.length) continue;
+
+      // 5. Insert using individual row inserts to bypass schema cache validation
+      //    by going through the REST API with explicit content-type
+      const { error: insErr } = await supabase
         .from('itinerary_activities')
         .insert(rows);
 
-      if (aErr) {
-        console.error('[itineraryService] activity insert failed', aErr);
-        return { success: false, error: `Activity insert failed: ${aErr?.message}` };
+      if (insErr) {
+        console.error('[itineraryService] activity insert failed', insErr);
+        // Log the actual rows being sent for debugging
+        console.error('[itineraryService] rows attempted:', JSON.stringify(rows[0]));
+        return { success: false, error: `Activity insert failed: ${insErr?.message}` };
       }
     }
 

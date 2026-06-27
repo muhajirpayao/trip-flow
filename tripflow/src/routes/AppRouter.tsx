@@ -3,6 +3,7 @@ import { lazy, Suspense } from 'react';
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
 import DashboardLayout from '../layouts/DashboardLayout';
 import LandingPage from '../pages/LandingPage';
+import UnderDevelopment from '../pages/UnderDevelopment';
 import { useAuth } from '../context/AuthContext';
 import NotificationsPage from '../pages/NotificationsPage';
 
@@ -14,6 +15,9 @@ const Expenses   = lazy(() => import('../pages/Expenses'));
 const Places     = lazy(() => import('../pages/Places'));
 const Profile    = lazy(() => import('../pages/Profile'));
 const Settings   = lazy(() => import('../pages/Settings'));
+
+// Flip this to false when you're ready to launch the real app.
+const UNDER_DEVELOPMENT = true;
 
 const Loader = () => (
   <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -35,39 +39,45 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-const router = createBrowserRouter([
-  {
-    path: '/',
-    element: <LandingPage />,
-  },
-  {
-    path: '/auth',
-    element: (
-      <GuestOnly>
-        <AuthPage />
-      </GuestOnly>
-    ),
-  },
-  {
-    path: '/dashboard',
-    element: (
-      <RequireAuth>
-        <DashboardLayout />
-      </RequireAuth>
-    ),
-    children: [
-      { index: true,            element: <Home /> },
-      { path: 'trip',           element: <Dashboard /> },
-      { path: 'itinerary',      element: <Itinerary /> },
-      { path: 'expenses',       element: <Expenses /> },
-      { path: 'places',         element: <Places /> },
-      { path: 'profile',        element: <Profile /> },
-      { path: 'settings',       element: <Settings /> },
-      { path: 'notifications',  element: <NotificationsPage /> }, // ← moved here
-    ],
-  },
-  { path: '*', element: <Navigate to="/" replace /> },
-]);
+const router = UNDER_DEVELOPMENT
+  ? createBrowserRouter([
+      // While under development, every path shows the same page.
+      // No login, no auth check, nothing else loads.
+      { path: '*', element: <UnderDevelopment /> },
+    ])
+  : createBrowserRouter([
+      {
+        path: '/',
+        element: <LandingPage />,
+      },
+      {
+        path: '/auth',
+        element: (
+          <GuestOnly>
+            <AuthPage />
+          </GuestOnly>
+        ),
+      },
+      {
+        path: '/dashboard',
+        element: (
+          <RequireAuth>
+            <DashboardLayout />
+          </RequireAuth>
+        ),
+        children: [
+          { index: true,            element: <Home /> },
+          { path: 'trip',           element: <Dashboard /> },
+          { path: 'itinerary',      element: <Itinerary /> },
+          { path: 'expenses',       element: <Expenses /> },
+          { path: 'places',         element: <Places /> },
+          { path: 'profile',        element: <Profile /> },
+          { path: 'settings',       element: <Settings /> },
+          { path: 'notifications',  element: <NotificationsPage /> },
+        ],
+      },
+      { path: '*', element: <Navigate to="/" replace /> },
+    ]);
 
 export default function AppRouter() {
   return (
