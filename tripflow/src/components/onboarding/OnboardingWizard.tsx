@@ -1,14 +1,14 @@
 // src/components/onboarding/OnboardingWizard.tsx
-// PHP added to currencies; date inputs block past dates.
+// PHP added to currencies; date inputs block past dates; name step added.
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, MapPin, Calendar, Wallet, Users, CheckCircle } from 'lucide-react';
+import { X, User, MapPin, Calendar, Wallet, Users, CheckCircle } from 'lucide-react';
 import { useTrip } from '../../context/TripContext';
 import type { OnboardingForm, Trip, TravelType, Currency } from '../../types';
 import { tripDays, fmtDate } from '../../utils';
 
-const STEPS = ['Destination', 'Dates', 'Budget', 'Travel Type', 'Review'];
+const STEPS = ['Your Name', 'Destination', 'Dates', 'Budget', 'Travel Type', 'Review'];
 
 const DESTINATIONS = [
   { emoji: '🇯🇵', label: 'Japan' },
@@ -27,7 +27,9 @@ const TRAVEL_TYPES: { value: TravelType; icon: string; label: string }[] = [
   { value: 'friends', icon: '👯', label: 'Friends' },
 ];
 
-const EMPTY_FORM: OnboardingForm = { dest: '', startDate: '', endDate: '', budget: '', currency: 'PHP', travelType: '' };
+const EMPTY_FORM: OnboardingForm = {
+  name: '', dest: '', startDate: '', endDate: '', budget: '', currency: 'PHP', travelType: '',
+};
 
 // Today's date in YYYY-MM-DD format (used as min for date pickers)
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -49,16 +51,17 @@ export default function OnboardingWizard({ onClose }: Props) {
 
   const validate = (): boolean => {
     const e: Record<string, string> = {};
-    if (step === 0 && !form.dest.trim()) e.dest = 'Enter a destination';
-    if (step === 1) {
+    if (step === 0 && !form.name.trim()) e.name = 'Tell us what to call you';
+    if (step === 1 && !form.dest.trim()) e.dest = 'Enter a destination';
+    if (step === 2) {
       if (!form.startDate) e.startDate = 'Pick a start date';
       if (!form.endDate)   e.endDate   = 'Pick an end date';
       if (form.startDate && form.startDate < TODAY) e.startDate = 'Start date cannot be in the past';
       if (form.startDate && form.endDate && form.endDate <= form.startDate)
         e.endDate = 'End must be after start';
     }
-    if (step === 2 && (!form.budget || Number(form.budget) <= 0)) e.budget = 'Enter a valid budget';
-    if (step === 3 && !form.travelType) e.travelType = 'Choose a travel type';
+    if (step === 3 && (!form.budget || Number(form.budget) <= 0)) e.budget = 'Enter a valid budget';
+    if (step === 4 && !form.travelType) e.travelType = 'Choose a travel type';
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -70,6 +73,7 @@ export default function OnboardingWizard({ onClose }: Props) {
     setSaving(true);
     const trip: Trip = {
       id:          Date.now().toString(),
+      displayName: form.name.trim(),
       destination: form.dest.trim(),
       startDate:   form.startDate,
       endDate:     form.endDate,
@@ -119,8 +123,29 @@ export default function OnboardingWizard({ onClose }: Props) {
         {/* Step content */}
         <div className="px-6 pb-4">
 
-          {/* Step 0: Destination */}
+          {/* Step 0: Name */}
           {step === 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <User size={20} className="text-indigo-500" />
+                <h2 className="text-xl font-bold">What should we call you?</h2>
+              </div>
+              <p className="text-sm text-slate-500 mb-5">We'll use this to greet you on your dashboard.</p>
+              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Preferred name</label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={e => set('name', e.target.value)}
+                placeholder="e.g. Marco"
+                autoFocus
+                className={`w-full px-4 py-3.5 rounded-xl border text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${errors.name ? 'border-red-400' : 'border-slate-200'}`}
+              />
+              {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name}</p>}
+            </div>
+          )}
+
+          {/* Step 1: Destination */}
+          {step === 1 && (
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <MapPin size={20} className="text-indigo-500" />
@@ -137,18 +162,18 @@ export default function OnboardingWizard({ onClose }: Props) {
               />
               {errors.dest && <p className="text-xs text-red-500 mt-1">{errors.dest}</p>}
               <div className="flex flex-wrap gap-2 mt-4">
-{DESTINATIONS.map(d => (
-  <button key={d.label} onClick={() => set('dest', d.label)}
-    className="px-3 py-1.5 rounded-full bg-slate-100 text-xs font-medium text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 transition-colors">
-    {d.emoji} {d.label}
-  </button>
-))}
+                {DESTINATIONS.map(d => (
+                  <button key={d.label} onClick={() => set('dest', d.label)}
+                    className="px-3 py-1.5 rounded-full bg-slate-100 text-xs font-medium text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 transition-colors">
+                    {d.emoji} {d.label}
+                  </button>
+                ))}
               </div>
             </div>
           )}
 
-          {/* Step 1: Dates */}
-          {step === 1 && (
+          {/* Step 2: Dates */}
+          {step === 2 && (
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <Calendar size={20} className="text-indigo-500" />
@@ -201,8 +226,8 @@ export default function OnboardingWizard({ onClose }: Props) {
             </div>
           )}
 
-          {/* Step 2: Budget */}
-          {step === 2 && (
+          {/* Step 3: Budget */}
+          {step === 3 && (
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <Wallet size={20} className="text-indigo-500" />
@@ -218,24 +243,24 @@ export default function OnboardingWizard({ onClose }: Props) {
                   </button>
                 ))}
               </div>
-<label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Amount</label>
-<div className="relative">
-  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">{form.currency}</span>
-  <input
-    type="text"
-    inputMode="numeric"
-    value={form.budget ? Number(form.budget).toLocaleString() : ''}
-    onChange={e => set('budget', e.target.value.replace(/[^0-9]/g, ''))}
-    placeholder="0"
-    className={`w-full pl-14 pr-4 py-3.5 rounded-xl border text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${errors.budget ? 'border-red-400' : 'border-slate-200'}`}
-  />
-</div>
-{errors.budget && <p className="text-xs text-red-500 mt-1">{errors.budget}</p>}
+              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Amount</label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">{form.currency}</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={form.budget ? Number(form.budget).toLocaleString() : ''}
+                  onChange={e => set('budget', e.target.value.replace(/[^0-9]/g, ''))}
+                  placeholder="0"
+                  className={`w-full pl-14 pr-4 py-3.5 rounded-xl border text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${errors.budget ? 'border-red-400' : 'border-slate-200'}`}
+                />
+              </div>
+              {errors.budget && <p className="text-xs text-red-500 mt-1">{errors.budget}</p>}
             </div>
           )}
 
-          {/* Step 3: Travel type */}
-          {step === 3 && (
+          {/* Step 4: Travel type */}
+          {step === 4 && (
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <Users size={20} className="text-indigo-500" />
@@ -255,8 +280,8 @@ export default function OnboardingWizard({ onClose }: Props) {
             </div>
           )}
 
-          {/* Step 4: Review */}
-          {step === 4 && (
+          {/* Step 5: Review */}
+          {step === 5 && (
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <CheckCircle size={20} className="text-emerald-500" />
@@ -265,6 +290,7 @@ export default function OnboardingWizard({ onClose }: Props) {
               <p className="text-sm text-slate-500 mb-5">Your trip summary looks great.</p>
               <div className="bg-slate-50 rounded-2xl overflow-hidden border border-slate-100">
                 {[
+                  { label: 'Name',          value: form.name },
                   { label: 'Destination',   value: form.dest },
                   { label: 'Start',         value: fmtDate(form.startDate) },
                   { label: 'End',           value: fmtDate(form.endDate) },

@@ -64,6 +64,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
     const row = {
       id: t.id,
       user_id: user.id,
+      display_name: sanitize(t.displayName ?? ''),
       destination: sanitize(t.destination),
       start_date: t.startDate,
       end_date: t.endDate,
@@ -82,11 +83,14 @@ export function TripProvider({ children }: { children: ReactNode }) {
       return false;
     }
 
-    setTrip({ ...t, destination: sanitize(t.destination) });
-    setAllTrips(prev => [
-      { ...t, destination: sanitize(t.destination) },
-      ...prev.filter(p => p.id !== t.id),
-    ]);
+    const cleaned: Trip = {
+      ...t,
+      displayName: sanitize(t.displayName ?? ''),
+      destination: sanitize(t.destination),
+    };
+
+    setTrip(cleaned);
+    setAllTrips(prev => [cleaned, ...prev.filter(p => p.id !== t.id)]);
     return true;
   };
 
@@ -135,6 +139,7 @@ function rowToTrip(row: Record<string, unknown>): Trip {
 
   return {
     id: String(row.id ?? ''),
+    displayName: String(row.display_name ?? ''),
     destination: String(row.destination ?? ''),
     startDate: String(row.start_date ?? ''),
     endDate: String(row.end_date ?? ''),

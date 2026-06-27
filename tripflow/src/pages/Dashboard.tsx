@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useTrip } from '../context/TripContext';
 import type { Trip } from '../types';
 import OnboardingWizard from '../components/onboarding/OnboardingWizard';
+import { useDestinationWeather, getTimeGreeting } from '../hooks/useDestinationWeather';
 import { daysUntil, tripDays, fmtDate, fmtShort, fmtCurrency } from '../utils';
 import {
   Calendar, Wallet, MapPin, User,
@@ -29,9 +30,11 @@ export default function Dashboard() {
   const [removing, setRemoving]             = useState(false);
   const [showEditModal, setShowEditModal]   = useState(false);
   const [saving, setSaving]                 = useState(false);
+  const [showAvatarMenu, setShowAvatarMenu] = useState(false);
   const navigate = useNavigate();
 
   const [editForm, setEditForm] = useState({
+    displayName: '',
     destination: '',
     startDate:   '',
     endDate:     '',
@@ -70,6 +73,11 @@ export default function Dashboard() {
   const total    = tripDays(trip.startDate, trip.endDate);
   const typeIcon = { solo: '🧳', couple: '💑', family: '👨‍👩‍👧', friends: '👯' }[trip.travelType];
 
+  const { weather } = useDestinationWeather(trip.destination);
+  const { label: timeGreeting } = getTimeGreeting();
+  const firstName = (trip.displayName || 'Traveler').split(' ')[0];
+  const cityShort = trip.destination.split(',')[0];
+
   // ── Remove trip ──
   const handleRemoveTrip = async () => {
     setRemoving(true);
@@ -82,6 +90,7 @@ export default function Dashboard() {
   // ── Open edit modal ──
   const openEditModal = () => {
     setEditForm({
+      displayName: trip.displayName,
       destination: trip.destination,
       startDate:   trip.startDate,
       endDate:     trip.endDate,
@@ -94,9 +103,10 @@ export default function Dashboard() {
 
   // ── Save edit ──
   const handleSaveEdit = async () => {
-    if (!editForm.destination.trim() || !editForm.startDate || !editForm.endDate) return;
+    if (!editForm.displayName.trim() || !editForm.destination.trim() || !editForm.startDate || !editForm.endDate) return;
     setSaving(true);
     await updateTrip?.({
+      displayName: editForm.displayName.trim(),
       destination: editForm.destination.trim(),
       startDate:   editForm.startDate,
       endDate:     editForm.endDate,
@@ -109,6 +119,7 @@ export default function Dashboard() {
   };
 
   const editValid =
+    editForm.displayName.trim() &&
     editForm.destination.trim() &&
     editForm.startDate &&
     editForm.endDate &&
@@ -141,31 +152,70 @@ export default function Dashboard() {
         <div className="absolute -bottom-8 left-8 w-32 h-32 rounded-full bg-white/[0.07]" />
         <div className="relative z-10 flex justify-between items-start gap-3">
           <div className="min-w-0">
-            <p className="text-violet-200 text-sm mb-1">Welcome back, Traveler 👋</p>
+            {/* Location pill */}
+            <div className="flex items-center gap-1 text-violet-200/70 text-xs font-semibold mb-2">
+              <MapPin size={12} />
+              <span className="truncate">{cityShort}</span>
+            </div>
+
             <h1 className="text-white text-xl sm:text-2xl font-black leading-tight mb-1 truncate">
-              {trip.destination}
+              {timeGreeting}, {firstName} 👋
             </h1>
-            <p className="text-violet-200 text-sm">
+            <p className="text-violet-200 text-sm mb-1 truncate">
+              {weather
+                ? `It's ${weather.description} in ${cityShort} ${weather.emoji} — check your itinerary for today.`
+                : `Planning your trip to ${trip.destination}.`}
+            </p>
+            <p className="text-violet-200 text-xs">
               {days === 0
                 ? 'Your adventure starts today! 🎉'
                 : `${days} day${days === 1 ? '' : 's'} to departure`}
             </p>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+
+          {/* Avatar with edit/delete menu */}
+          <div className="relative flex-shrink-0">
             <button
-              onClick={openEditModal}
-              className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 text-white text-xs font-semibold px-3 py-2 rounded-full transition-colors"
+              onClick={() => setShowAvatarMenu(v => !v)}
+              className="w-11 h-11 rounded-full bg-white/20 border-2 border-white/30 flex items-center justify-center overflow-hidden"
             >
-              <Pencil size={12} />
-              <span className="hidden sm:inline">Edit trip</span>
+              <User size={20} className="text-white/70" />
             </button>
-            <button
-              onClick={() => setConfirmRemove(true)}
-              className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 text-white text-xs font-semibold px-3 py-2 rounded-full transition-colors"
-            >
-              <Trash2 size={12} />
-              <span className="hidden sm:inline">Remove trip</span>
-            </button>
+
+            <AnimatePresence>
+              {showAvatarMenu && (
+                <>
+                  {/* Click-away backdrop */}
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setShowAvatarMenu(false)}
+                  />
+                  <motion.div
+                    initial={{ opacity: 0, y: -6, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -6, scale: 0.96 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute right-0 top-13 mt-2 w-40 bg-white rounded-2xl shadow-xl shadow-black/10 overflow-hidden z-50"
+                  >
+                    <button
+                      onClick={() => { setShowAvatarMenu(false); openEditModal(); }}
+                      className="w-full flex items-center gap-2 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                    >
+                      <Pencil size={14} className="text-violet-500" />
+                      Edit trip
+                    </button>
+                    <div className="h-px bg-slate-100" />
+                    <button
+                      onClick={() => { setShowAvatarMenu(false); setConfirmRemove(true); }}
+                      className="w-full flex items-center gap-2 px-4 py-3 text-sm font-semibold text-rose-500 hover:bg-rose-50 transition-colors"
+                    >
+                      <Trash2 size={14} />
+                      Remove trip
+                    </button>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </div>
@@ -275,6 +325,7 @@ export default function Dashboard() {
             </div>
           </div>
           {[
+            { label: 'Name',        value: trip.displayName || '—' },
             { label: 'Destination', value: trip.destination },
             { label: 'Departure',   value: fmtDate(trip.startDate) },
             { label: 'Return',      value: fmtDate(trip.endDate) },
@@ -360,6 +411,17 @@ export default function Dashboard() {
               </div>
 
               <div className="space-y-4">
+                {/* Name */}
+                <div>
+                  <label className="text-xs font-bold text-slate-500 mb-1.5 block">Your name</label>
+                  <input
+                    value={editForm.displayName}
+                    onChange={e => setEditForm({ ...editForm, displayName: e.target.value })}
+                    placeholder="e.g. Marco"
+                    className="w-full px-4 py-3 rounded-2xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-violet-400 bg-slate-50/50"
+                  />
+                </div>
+
                 {/* Destination */}
                 <div>
                   <label className="text-xs font-bold text-slate-500 mb-1.5 block">Destination</label>
