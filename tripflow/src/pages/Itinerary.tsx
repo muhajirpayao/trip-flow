@@ -368,7 +368,7 @@ function CategoryBadge({ cat }: { cat: CategoryKey }) {
   );
 }
 
-// ─── Timeline Node — SMALLER (25px) ──────────────────────────────────────────
+// ─── Timeline Node — SMALLER (36px) ──────────────────────────────────────────
 
 function TimelineNode({ activity, status }: { activity: RichActivity; status: ActivityStatus }) {
   const catKey = activity.category ?? 'custom';
@@ -378,8 +378,8 @@ function TimelineNode({ activity, status }: { activity: RichActivity; status: Ac
     <motion.div
       className="flex-shrink-0 flex items-center justify-center rounded-full"
       style={{
-        width: 25,
-        height: 25,
+        width: 36,
+        height: 36,
         background: '#7C5CFF',
         border: '3px solid #f3f0ff',
         boxShadow:

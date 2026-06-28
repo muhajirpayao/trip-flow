@@ -1,5 +1,4 @@
-// src/pages/Expenses.tsx
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, BarChart2, List } from 'lucide-react';
 import { useTrip } from '../context/TripContext';
@@ -76,6 +75,38 @@ export default function Expenses() {
 
   const spent = expenses.reduce((s, e) => s + e.amount, 0);
 
+  // Build the full list of trip days from start → end date, same approach as
+  // Itinerary.tsx's day selector. This way the tabs always reflect the trip's
+  // designated date range, even for days with zero expenses yet.
+  const tripDayList = useMemo(() => {
+    if (!trip) return [];
+    const list: string[] = [];
+    const start = new Date(trip.startDate);
+    const end   = new Date(trip.endDate);
+    const cur   = new Date(start);
+    while (cur <= end) {
+      list.push(cur.toISOString().slice(0, 10));
+      cur.setDate(cur.getDate() + 1);
+    }
+    return list;
+  }, [trip]);
+
+  const [activeDay, setActiveDay] = useState(0);
+
+  // Keep activeDay pointing at today if it's within range, otherwise day 0.
+  useEffect(() => {
+    if (!tripDayList.length) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const idx = tripDayList.indexOf(today);
+    setActiveDay(idx >= 0 ? idx : 0);
+  }, [tripDayList]);
+
+  const activeDate = tripDayList[activeDay];
+
+  // Each expense stays on the day it already has — we're only filtering
+  // the already-loaded data down to the selected tab, not reassigning days.
+  const dayExpenses = expenses.filter(e => e.expenseDate.slice(0, 10) === activeDate);
+
   if (!trip) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-8 text-center">
@@ -126,6 +157,37 @@ export default function Expenses() {
         />
       </div>
 
+      {/* Day selector — mirrors Itinerary.tsx, built from the trip's date range */}
+      <div className="px-4 mb-4">
+        <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
+          {tripDayList.map((d, i) => {
+            const dateObj  = new Date(d);
+            const isActive = i === activeDay;
+            return (
+              <motion.button
+                key={d}
+                onClick={() => setActiveDay(i)}
+                whileTap={{ scale: 0.92 }}
+                className={`flex-shrink-0 flex flex-col items-center justify-center w-[58px] py-2.5 rounded-2xl border transition-colors duration-200 ${
+                  isActive
+                    ? 'text-white border-transparent shadow-lg shadow-violet-300'
+                    : 'bg-white text-slate-600 border-slate-100 shadow-sm'
+                }`}
+                style={isActive ? { background: 'linear-gradient(135deg, #8B5CF6, #a855f7)' } : {}}
+              >
+                <span className={`text-[9px] font-bold uppercase ${isActive ? 'text-violet-100' : 'text-slate-400'}`}>
+                  {dateObj.toLocaleDateString(undefined, { weekday: 'short' })}
+                </span>
+                <span className="text-sm font-black mt-0.5">{dateObj.getDate()}</span>
+                <span className={`text-[9px] font-medium ${isActive ? 'text-violet-100' : 'text-slate-400'}`}>
+                  {dateObj.toLocaleDateString(undefined, { month: 'short' })}
+                </span>
+              </motion.button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Main content */}
       <div className="px-4 pb-28">
         {loading ? (
@@ -141,10 +203,18 @@ export default function Expenses() {
               <motion.div key="list"
                 initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 8 }} transition={{ duration: 0.2 }}>
-                <ExpenseList
-                  expenses={expenses} currency={trip.currency}
-                  onAdd={openAdd} onEdit={openEdit} onDelete={handleDelete}
-                />
+                <div className="flex flex-col gap-5">
+                  {dayExpenses.length === 0 ? (
+                    <p className="py-10 text-center text-sm text-slate-400">
+                      No expenses for this day yet. Tap + to add one.
+                    </p>
+                  ) : (
+                    <ExpenseList
+                      expenses={dayExpenses} currency={trip.currency}
+                      onAdd={openAdd} onEdit={openEdit} onDelete={handleDelete}
+                    />
+                  )}
+                </div>
               </motion.div>
             ) : (
               <motion.div key="analytics"
