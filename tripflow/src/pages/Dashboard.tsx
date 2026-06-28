@@ -8,10 +8,11 @@ import { useDestinationWeather, getTimeGreeting } from '../hooks/useDestinationW
 import { useDestinationPhotos } from '../hooks/useDestinationPhotos';
 import {tripDays, fmtDate, fmtShort, fmtCurrency } from '../utils';
 import {
-  Calendar, Wallet, MapPin, User,
+  Calendar, Wallet, MapPin,
   Plus, ArrowRight, Trash2, Pencil, X, AlertTriangle,
   Star, Plane, FileText, WifiOff,
 } from 'lucide-react';
+
 
 const QUICK = [
   { icon: Calendar, label: 'Itinerary', to: '/dashboard/itinerary', color: 'bg-indigo-50 text-indigo-600' },
