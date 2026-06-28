@@ -141,7 +141,7 @@ export default function Profile() {
   // Display name lives on the `trips` row (trips.display_name) per your schema.
   // Falls back to the email's local part if no trip/name exists yet.
   const [displayName, setDisplayName] = useState(
-    trip?.display_name || email.split('@')[0] || 'Traveler'
+    trip?.displayName || email.split('@')[0] || 'Traveler'
   );
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput]     = useState(displayName);
@@ -150,8 +150,8 @@ export default function Profile() {
 
   // Keep local state in sync if the trip loads/changes after mount
   useEffect(() => {
-    if (trip?.display_name) setDisplayName(trip.display_name);
-  }, [trip?.display_name]);
+    if (trip?.displayName) setDisplayName(trip.displayName);
+  }, [trip?.displayName]);
 
   const initials = displayName
     .split(' ')
@@ -248,9 +248,9 @@ export default function Profile() {
   const tripChanges = trip
     ? [
         `Destination: ${trip.destination}`,
-        `Dates: ${trip.start_date} → ${trip.end_date}`,
+        `Dates: ${trip.startDate} → ${trip.endDate}`,
         `Budget: ${trip.budget} ${trip.currency}`,
-        `Travel type: ${trip.travel_type}`,
+        `Travel type: ${trip.travelType}`,
       ]
     : [];
 

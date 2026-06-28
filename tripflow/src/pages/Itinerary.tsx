@@ -9,6 +9,118 @@ import {
   Pencil, AlertTriangle, StickyNote, Sparkles, CheckCircle2, Circle,
 } from 'lucide-react';
 
+// ─── Weather hook ─────────────────────────────────────────────────────────────
+
+type WeatherData = { temp: number; desc: string; icon: string; feels: number } | null;
+
+function useWeather(destination: string): WeatherData {
+  const [weather, setWeather] = useState<WeatherData>(null);
+  useEffect(() => {
+    if (!destination) return;
+    let cancelled = false;
+    // Open-Meteo: geocode first, then fetch weather (free, no key)
+    const city = destination.split(',')[0].trim();
+    fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`)
+      .then(r => r.json())
+      .then(geo => {
+        if (cancelled || !geo.results?.length) return;
+        const { latitude, longitude } = geo.results[0];
+        return fetch(
+          `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
+          `&current=temperature_2m,apparent_temperature,weathercode&temperature_unit=celsius&timezone=auto`
+        );
+      })
+      .then(r => r?.json())
+      .then(data => {
+        if (cancelled || !data?.current) return;
+        const code: number = data.current.weathercode;
+        const WMO_ICONS: Record<number, string> = {
+          0:'☀️', 1:'🌤️', 2:'⛅', 3:'☁️',
+          45:'🌫️', 48:'🌫️',
+          51:'🌦️', 53:'🌦️', 55:'🌧️',
+          61:'🌧️', 63:'🌧️', 65:'🌧️',
+          71:'🌨️', 73:'🌨️', 75:'❄️',
+          80:'🌦️', 81:'🌧️', 82:'⛈️',
+          95:'⛈️', 96:'⛈️', 99:'⛈️',
+        };
+        const WMO_DESC: Record<number, string> = {
+          0:'Clear sky', 1:'Mainly clear', 2:'Partly cloudy', 3:'Overcast',
+          45:'Foggy', 48:'Icy fog',
+          51:'Light drizzle', 53:'Drizzle', 55:'Heavy drizzle',
+          61:'Light rain', 63:'Rain', 65:'Heavy rain',
+          71:'Light snow', 73:'Snow', 75:'Heavy snow',
+          80:'Showers', 81:'Heavy showers', 82:'Violent showers',
+          95:'Thunderstorm', 96:'Thunderstorm', 99:'Thunderstorm',
+        };
+        setWeather({
+          temp:   Math.round(data.current.temperature_2m),
+          feels:  Math.round(data.current.apparent_temperature),
+          icon:   WMO_ICONS[code] ?? '🌡️',
+          desc:   WMO_DESC[code]  ?? 'Unknown',
+        });
+      })
+      .catch(() => {/* silently fail */});
+    return () => { cancelled = true; };
+  }, [destination]);
+  return weather;
+}
+
+// ─── Material-style icon paths per category ────────────────────────────────────
+// Using simple SVG paths that mirror Material Symbols filled style
+
+const CATEGORY_ICONS: Record<string, React.ReactNode> = {
+  flight: (
+    <svg viewBox="0 0 24 24" fill="white" width="22" height="22">
+      <path d="M21 16v-2l-8-5V3.5A1.5 1.5 0 0 0 11.5 2 1.5 1.5 0 0 0 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/>
+    </svg>
+  ),
+  transport: (
+    <svg viewBox="0 0 24 24" fill="white" width="22" height="22">
+      <path d="M12 2c-4 0-8 .5-8 4v9.5A2.5 2.5 0 0 0 6.5 18l-1.5 1.5v.5h2l2-2h6l2 2h2v-.5L17.5 18a2.5 2.5 0 0 0 2.5-2.5V6c0-3.5-4-4-8-4zm-3.5 13a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm7 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zM4 10V6h16v4H4z"/>
+    </svg>
+  ),
+  hotel: (
+    <svg viewBox="0 0 24 24" fill="white" width="22" height="22">
+      <path d="M7 13c1.66 0 3-1.34 3-3S8.66 7 7 7s-3 1.34-3 3 1.34 3 3 3zm12-6h-8v7H3V5H1v15h2v-3h18v3h2v-9a4 4 0 0 0-4-4z"/>
+    </svg>
+  ),
+  sightseeing: (
+    <svg viewBox="0 0 24 24" fill="white" width="22" height="22">
+      <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 0 1 9.5 9 2.5 2.5 0 0 1 12 6.5 2.5 2.5 0 0 1 14.5 9a2.5 2.5 0 0 1-2.5 2.5z"/>
+    </svg>
+  ),
+  food: (
+    <svg viewBox="0 0 24 24" fill="white" width="22" height="22">
+      <path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z"/>
+    </svg>
+  ),
+  cafe: (
+    <svg viewBox="0 0 24 24" fill="white" width="22" height="22">
+      <path d="M20 3H4v10c0 2.21 1.79 4 4 4h6c2.21 0 4-1.79 4-4v-3h2c1.11 0 2-.89 2-2V5a2 2 0 0 0-2-2zm0 5h-2V5h2v3zM4 19h16v2H4z"/>
+    </svg>
+  ),
+  shopping: (
+    <svg viewBox="0 0 24 24" fill="white" width="22" height="22">
+      <path d="M19 6h-2a5 5 0 0 0-10 0H5a2 2 0 0 0-2 2l-1 13h20L21 8a2 2 0 0 0-2-2zm-7-3a3 3 0 0 1 3 3H9a3 3 0 0 1 3-3zm0 10a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/>
+    </svg>
+  ),
+  entertainment: (
+    <svg viewBox="0 0 24 24" fill="white" width="22" height="22">
+      <path d="M18 3v2h-2V3H8v2H6V3H4v18h2v-2h2v2h8v-2h2v2h2V3h-2zM8 17H6v-2h2v2zm0-4H6v-2h2v2zm0-4H6V7h2v2zm10 8h-2v-2h2v2zm0-4h-2v-2h2v2zm0-4h-2V7h2v2z"/>
+    </svg>
+  ),
+  photo: (
+    <svg viewBox="0 0 24 24" fill="white" width="22" height="22">
+      <path d="M12 15.2A3.2 3.2 0 0 1 8.8 12 3.2 3.2 0 0 1 12 8.8 3.2 3.2 0 0 1 15.2 12 3.2 3.2 0 0 1 12 15.2zM9 2L7.17 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3.17L15 2H9z"/>
+    </svg>
+  ),
+  custom: (
+    <svg viewBox="0 0 24 24" fill="white" width="22" height="22">
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+    </svg>
+  ),
+};
+
 // ─── Category system ───────────────────────────────────────────────────────────
 
 type CategoryKey =
@@ -16,25 +128,25 @@ type CategoryKey =
   | 'flight' | 'transport' | 'hotel' | 'entertainment'
   | 'photo' | 'custom';
 
-const CATEGORIES: Record<CategoryKey, { emoji: string; label: string; bg: string; text: string; badge: string }> = {
-  sightseeing:   { emoji: '🗺️',  label: 'Sightseeing',   bg: 'bg-sky-50',      text: 'text-sky-600',      badge: 'bg-sky-100 text-sky-700' },
-  food:          { emoji: '🍽️',  label: 'Food',          bg: 'bg-orange-50',   text: 'text-orange-500',   badge: 'bg-orange-100 text-orange-700' },
-  cafe:          { emoji: '☕',   label: 'Cafe',          bg: 'bg-purple-50',   text: 'text-purple-500',   badge: 'bg-purple-100 text-purple-700' },
-  shopping:      { emoji: '🛍️',  label: 'Shopping',      bg: 'bg-pink-50',     text: 'text-pink-500',     badge: 'bg-pink-100 text-pink-700' },
-  flight:        { emoji: '✈️',  label: 'Flight',        bg: 'bg-blue-50',     text: 'text-blue-500',     badge: 'bg-blue-100 text-blue-700' },
-  transport:     { emoji: '🚆',  label: 'Transport',     bg: 'bg-teal-50',     text: 'text-teal-500',     badge: 'bg-teal-100 text-teal-700' },
-  hotel:         { emoji: '🏨',  label: 'Hotel',         bg: 'bg-violet-50',   text: 'text-violet-500',   badge: 'bg-violet-100 text-violet-700' },
-  entertainment: { emoji: '🎡',  label: 'Entertainment', bg: 'bg-rose-50',     text: 'text-rose-500',     badge: 'bg-rose-100 text-rose-700' },
-  photo:         { emoji: '📸',  label: 'Photo Spot',    bg: 'bg-fuchsia-50',  text: 'text-fuchsia-500',  badge: 'bg-fuchsia-100 text-fuchsia-700' },
-  custom:        { emoji: '🌸',  label: 'Custom',        bg: 'bg-lime-50',     text: 'text-lime-600',     badge: 'bg-lime-100 text-lime-700' },
+const CATEGORIES: Record<CategoryKey, { emoji: string; label: string; bg: string; text: string; badge: string; nodeGradient: string }> = {
+  sightseeing:   { emoji: '🗺️',  label: 'Sightseeing',   bg: 'bg-sky-50',      text: 'text-sky-600',      badge: 'bg-sky-100 text-sky-700',         nodeGradient: 'linear-gradient(135deg,#38bdf8,#0284c7)' },
+  food:          { emoji: '🍽️',  label: 'Food',          bg: 'bg-orange-50',   text: 'text-orange-500',   badge: 'bg-orange-100 text-orange-700',    nodeGradient: 'linear-gradient(135deg,#fb923c,#ea580c)' },
+  cafe:          { emoji: '☕',   label: 'Cafe',          bg: 'bg-purple-50',   text: 'text-purple-500',   badge: 'bg-purple-100 text-purple-700',    nodeGradient: 'linear-gradient(135deg,#c084fc,#9333ea)' },
+  shopping:      { emoji: '🛍️',  label: 'Shopping',      bg: 'bg-pink-50',     text: 'text-pink-500',     badge: 'bg-pink-100 text-pink-700',        nodeGradient: 'linear-gradient(135deg,#f472b6,#db2777)' },
+  flight:        { emoji: '✈️',  label: 'Flight',        bg: 'bg-blue-50',     text: 'text-blue-500',     badge: 'bg-blue-100 text-blue-700',        nodeGradient: 'linear-gradient(135deg,#7C5CFF,#8B5CF6)' },
+  transport:     { emoji: '🚆',  label: 'Transport',     bg: 'bg-teal-50',     text: 'text-teal-500',     badge: 'bg-teal-100 text-teal-700',        nodeGradient: 'linear-gradient(135deg,#2dd4bf,#0d9488)' },
+  hotel:         { emoji: '🏨',  label: 'Hotel',         bg: 'bg-violet-50',   text: 'text-violet-500',   badge: 'bg-violet-100 text-violet-700',    nodeGradient: 'linear-gradient(135deg,#a78bfa,#7c3aed)' },
+  entertainment: { emoji: '🎡',  label: 'Entertainment', bg: 'bg-rose-50',     text: 'text-rose-500',     badge: 'bg-rose-100 text-rose-700',        nodeGradient: 'linear-gradient(135deg,#fb7185,#e11d48)' },
+  photo:         { emoji: '📸',  label: 'Photo Spot',    bg: 'bg-fuchsia-50',  text: 'text-fuchsia-500',  badge: 'bg-fuchsia-100 text-fuchsia-700',  nodeGradient: 'linear-gradient(135deg,#e879f9,#c026d3)' },
+  custom:        { emoji: '🌸',  label: 'Custom',        bg: 'bg-lime-50',     text: 'text-lime-600',     badge: 'bg-lime-100 text-lime-700',        nodeGradient: 'linear-gradient(135deg,#a3e635,#65a30d)' },
 };
 
 type ActivityStatus = 'upcoming' | 'inprogress' | 'completed';
 
-const STATUS_STYLES: Record<ActivityStatus, { label: string; pill: string; dot: string }> = {
-  upcoming:   { label: '✨ Upcoming',    pill: 'bg-violet-100 text-violet-600',  dot: 'bg-violet-400' },
-  inprogress: { label: '🟣 In Progress', pill: 'bg-pink-100 text-pink-600',      dot: 'bg-pink-400 animate-pulse' },
-  completed:  { label: '✓ Completed',    pill: 'bg-emerald-100 text-emerald-600', dot: 'bg-emerald-400' },
+const STATUS_STYLES: Record<ActivityStatus, { label: string; pill: string }> = {
+  upcoming:   { label: '✨ Upcoming',    pill: 'bg-violet-100 text-violet-600'  },
+  inprogress: { label: '🟣 In Progress', pill: 'bg-pink-100 text-pink-600'      },
+  completed:  { label: '✓ Completed',    pill: 'bg-emerald-100 text-emerald-600' },
 };
 
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -43,12 +155,13 @@ const WEEKDAY_LONG  = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', '
 // ─── Extended activity type ────────────────────────────────────────────────────
 
 type RichActivity = ItineraryActivity & {
-  timeEnd?:  string;
-  category?: CategoryKey;
-  status?:   ActivityStatus;
-  notes?:    string;
-  location?: string;
-  dateEnd?:  string;
+  timeEnd?:   string;
+  category?:  CategoryKey;
+  status?:    ActivityStatus;
+  notes?:     string;
+  location?:  string;
+  dateEnd?:   string;
+  isPinned?:  boolean; // true = auto-posted departure/return, not deletable
 };
 
 // ─── Time / date helpers ───────────────────────────────────────────────────────
@@ -91,9 +204,7 @@ function addDays(dateStr: string, n: number) {
 }
 
 function detectStatus(activity: RichActivity, dayDate: string): ActivityStatus {
-  if (activity.status === 'completed' || activity.status === 'upcoming') {
-    return activity.status;
-  }
+  if (activity.status === 'completed' || activity.status === 'upcoming') return activity.status;
   const today = todayDate();
   if (dayDate < today) return 'completed';
   if (dayDate > today) return 'upcoming';
@@ -113,6 +224,56 @@ function hasConflict(
     if (start < aEnd && end > a.time) return a;
   }
   return null;
+}
+
+// ─── Auto-pinned activity builders ────────────────────────────────────────────
+
+function buildDepartureActivity(destination: string): RichActivity {
+  return {
+    id:        '__departure__',
+    time:      '08:00',
+    timeEnd:   '10:00',
+    title:     `Departure to ${destination}`,
+    category:  'flight',
+    type:      'flight' as unknown as ItineraryActivity['type'],
+    isPinned:  true,
+    notes:     'Edit to add flight details, departure time, and airport info.',
+  };
+}
+
+function buildReturnActivity(destination: string): RichActivity {
+  return {
+    id:        '__return__',
+    time:      '10:00',
+    timeEnd:   '12:00',
+    title:     `Return from ${destination}`,
+    category:  'flight',
+    type:      'flight' as unknown as ItineraryActivity['type'],
+    isPinned:  true,
+    notes:     'Edit to add your return flight details and airport info.',
+  };
+}
+
+/**
+ * Ensures Day 0 has the departure pinned activity and last day has the return.
+ * Only injects if not already present (by __departure__ / __return__ id).
+ */
+function injectPinnedActivities(days: ItineraryDay[], destination: string): ItineraryDay[] {
+  if (!days.length) return days;
+  return days.map((d, i) => {
+    let acts = [...d.activities] as RichActivity[];
+    if (i === 0) {
+      if (!acts.find(a => a.id === '__departure__')) {
+        acts = [buildDepartureActivity(destination), ...acts];
+      }
+    }
+    if (i === days.length - 1) {
+      if (!acts.find(a => a.id === '__return__')) {
+        acts = [...acts, buildReturnActivity(destination)];
+      }
+    }
+    return { ...d, activities: acts };
+  });
 }
 
 // ─── Empty day builder ─────────────────────────────────────────────────────────
@@ -150,39 +311,73 @@ const BLANK_FORM: FormState = {
   multiDay: false, dateEnd: '',
 };
 
-// ─── Day Progress bar ──────────────────────────────────────────────────────────
+// ─── Day Progress bar + Weather ────────────────────────────────────────────────
 
-function DayProgress({ total, completed }: { total: number; completed: number }) {
-  const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
+function DayProgress({
+  total, completed, destination,
+}: {
+  total: number; completed: number; destination: string;
+}) {
+  const pct     = total === 0 ? 0 : Math.round((completed / total) * 100);
+  const weather = useWeather(destination);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: -12 }}
       animate={{ opacity: 1, y: 0 }}
       className="mx-4 sm:mx-6 mb-4 rounded-3xl overflow-hidden"
-      style={{ background: 'linear-gradient(135deg, #7C5CFF 0%, #8B5CF6 100%)' }}
+      style={{ background: 'linear-gradient(135deg, #6b38d4 0%, #8455ef 100%)' }}
     >
       <div className="relative p-4 sm:p-5 overflow-hidden">
-        <div className="absolute -top-8 -right-8 w-28 h-28 rounded-full bg-white/10" />
-        <div className="absolute -bottom-6 left-8 w-16 h-16 rounded-full bg-white/[0.07]" />
+        {/* Decorative blobs */}
+        <div className="absolute -top-10 -right-10 w-36 h-36 rounded-full bg-white/10 pointer-events-none" />
+        <div className="absolute -bottom-8 left-6 w-20 h-20 rounded-full bg-white/[0.06] pointer-events-none" />
+
+        {/* Top row: progress label + weather */}
         <div className="relative flex items-start justify-between mb-3">
           <div>
-            <p className="text-white/70 text-[11px] font-semibold mb-0.5">Day progress</p>
+            <p className="text-white/70 text-[11px] font-semibold mb-0.5 uppercase tracking-wide">Daily Progress</p>
             <p className="text-white text-xl font-black">{completed} / {total}</p>
-            <p className="text-white/60 text-[11px]">activities completed</p>
+            <p className="text-white/60 text-[11px]">
+              {pct === 100 ? "You've completed today's plan! 🎉" : 'activities completed'}
+            </p>
           </div>
-          <div className="text-right">
-            <span className="text-white text-3xl font-black">{pct}%</span>
+
+          {/* Weather widget */}
+          <div className="flex flex-col items-end gap-0.5">
+            {weather ? (
+              <>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-2xl leading-none">{weather.icon}</span>
+                  <span className="text-white text-2xl font-black leading-none">{weather.temp}°</span>
+                </div>
+                <p className="text-white/70 text-[10px] font-semibold text-right leading-tight">{weather.desc}</p>
+                <p className="text-white/50 text-[9px] text-right">Feels {weather.feels}°C</p>
+              </>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white/80 animate-spin" />
+                <span className="text-white/50 text-[10px]">Weather…</span>
+              </div>
+            )}
           </div>
         </div>
-        <div className="h-2 rounded-full bg-white/25 overflow-hidden">
+
+        {/* Progress bar */}
+        <div className="h-2.5 rounded-full bg-white/20 overflow-hidden">
           <motion.div
             className="h-full rounded-full"
-            style={{ background: 'linear-gradient(90deg, #FFD6C2, #FFB7E1)' }}
+            style={{ background: 'linear-gradient(90deg,#ffd6c2,#ffb7e1)' }}
             initial={{ width: 0 }}
             animate={{ width: `${pct}%` }}
-            transition={{ duration: 0.8, ease: [0.22, 0.68, 0, 1.2] }}
+            transition={{ duration: 0.9, ease: [0.22, 0.68, 0, 1.2] }}
           />
         </div>
+
+        {/* Bottom: location label */}
+        <p className="relative text-white/40 text-[10px] font-semibold mt-2 uppercase tracking-wider">
+          📍 {destination}
+        </p>
       </div>
     </motion.div>
   );
@@ -196,6 +391,45 @@ function CategoryBadge({ cat }: { cat: CategoryKey }) {
     <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${c.badge}`}>
       {c.emoji} {c.label}
     </span>
+  );
+}
+
+// ─── Timeline Node — large filled purple circle with SVG icon ─────────────────
+
+function TimelineNode({
+  activity,
+  status,
+}: {
+  activity: RichActivity;
+  status:   ActivityStatus;
+}) {
+  const catKey = activity.category ?? 'custom';
+  const icon   = CATEGORY_ICONS[catKey] ?? CATEGORY_ICONS['custom'];
+
+  return (
+    <motion.div
+      className="flex-shrink-0 flex items-center justify-center rounded-full"
+      style={{
+        width: 48,
+        height: 48,
+        background: '#6b38d4',
+        border: '4px solid #fbf8ff',
+        boxShadow:
+          status === 'inprogress'
+            ? '0 0 0 3px rgba(107,56,212,0.30), 0 6px 18px rgba(107,56,212,0.35)'
+            : status === 'completed'
+            ? '0 0 0 3px rgba(52,211,153,0.35), 0 4px 14px rgba(0,0,0,0.12)'
+            : '0 0 0 3px rgba(107,56,212,0.18), 0 4px 14px rgba(107,56,212,0.22)',
+        zIndex: 2,
+      }}
+      animate={status === 'inprogress' ? { scale: [1, 1.08, 1] } : { scale: 1 }}
+      transition={status === 'inprogress' ? { repeat: Infinity, duration: 1.8, ease: 'easeInOut' } : {}}
+    >
+      {status === 'completed'
+        ? <svg viewBox="0 0 24 24" fill="white" width="22" height="22"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+        : icon
+      }
+    </motion.div>
   );
 }
 
@@ -216,39 +450,46 @@ function ActivityCard({
   const st     = STATUS_STYLES[status];
   const isDone = status === 'completed';
   const isMultiDay = !!activity.dateEnd && activity.dateEnd !== dayDate;
-
-  const nodeStyle =
-    status === 'completed'  ? 'bg-gradient-to-br from-emerald-300 to-emerald-500 shadow-emerald-200' :
-    status === 'inprogress' ? 'bg-gradient-to-br from-pink-300 to-pink-500 shadow-pink-200 animate-pulse' :
-                              'bg-gradient-to-br from-violet-400 to-violet-600 shadow-violet-200';
+  const isPinned = !!activity.isPinned;
 
   return (
     <motion.div
-      className="relative flex gap-3 items-start"
+      className="relative"
       initial={{ opacity: 0, x: -16, scale: 0.97 }}
       animate={{ opacity: 1, x: 0, scale: 1 }}
       exit={{ opacity: 0, height: 0, marginBottom: 0 }}
       transition={{ type: 'spring', stiffness: 340, damping: 28 }}
       layout
     >
-      <div className="flex flex-col items-center pt-1 flex-shrink-0" style={{ width: 22 }}>
-        <motion.div
-          className={`w-[22px] h-[22px] rounded-full flex items-center justify-center text-white text-[10px] font-black shadow-md ${nodeStyle}`}
-          whileTap={{ scale: 0.85 }}
-        >
-          {isDone ? '✓' : status === 'inprogress' ? '▶' : ''}
-        </motion.div>
+      {/* Node: absolute left=0, width=48px → center at 24px matches line left:24 */}
+      <div
+        className="absolute flex items-center justify-center"
+        style={{ left: 0, top: 14, width: 48, zIndex: 2 }}
+      >
+        <TimelineNode activity={activity} status={status} />
       </div>
 
+      {/* Card offset right: 48px node + 12px gap = 60px */}
       <motion.div
-        className={`flex-1 min-w-0 rounded-3xl border p-3.5 sm:p-4 transition-all duration-300 overflow-hidden ${
+        className={`ml-[62px] min-w-0 rounded-3xl border p-3.5 sm:p-4 transition-all duration-300 overflow-hidden ${
           isDone
             ? 'bg-white/60 border-slate-100 opacity-60'
+            : isPinned
+            ? 'bg-white border-violet-100 shadow-[0_4px_20px_rgba(124,92,255,0.10)]'
             : 'bg-white border-slate-100 shadow-[0_4px_20px_rgba(124,92,255,0.07)]'
         }`}
         whileHover={{ y: -2, boxShadow: '0 8px 28px rgba(124,92,255,0.13)' }}
         whileTap={{ scale: 0.985 }}
       >
+        {/* Pinned pill */}
+        {isPinned && (
+          <div className="flex items-center gap-1 mb-2">
+            <span className="text-[10px] font-black text-violet-500 bg-violet-50 px-2 py-0.5 rounded-full border border-violet-100">
+              📌 Auto-scheduled · tap ✏️ to edit
+            </span>
+          </div>
+        )}
+
         <div className="flex items-start gap-3">
           <div className={`w-9 h-9 rounded-2xl flex items-center justify-center text-base flex-shrink-0 ${cat.bg}`}>
             {cat.emoji}
@@ -286,7 +527,9 @@ function ActivityCard({
               <CategoryBadge cat={activity.category ?? 'custom'} />
             </div>
           </div>
+
           <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+            {/* Toggle complete — always visible */}
             <motion.button
               onClick={onToggle}
               whileTap={{ scale: 0.8 }}
@@ -298,6 +541,8 @@ function ActivityCard({
                 : <Circle size={20} className="text-slate-200 hover:text-violet-300 transition-colors" />
               }
             </motion.button>
+
+            {/* Edit always visible; delete hidden for pinned */}
             {!isDayInPast && (
               <div className="flex gap-1">
                 <button
@@ -307,13 +552,15 @@ function ActivityCard({
                 >
                   <Pencil size={12} />
                 </button>
-                <button
-                  onClick={onDelete}
-                  aria-label="Delete activity"
-                  className="w-7 h-7 flex items-center justify-center rounded-xl text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition-colors"
-                >
-                  <Trash2 size={12} />
-                </button>
+                {!isPinned && (
+                  <button
+                    onClick={onDelete}
+                    aria-label="Delete activity"
+                    className="w-7 h-7 flex items-center justify-center rounded-xl text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition-colors"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -364,7 +611,7 @@ function DailySummary({ total, completed }: { total: number; completed: number }
       </div>
       <div className="grid grid-cols-2 gap-3">
         {[
-          { label: 'Activities', value: String(total),           sub: `${completed} done` },
+          { label: 'Activities', value: String(total),            sub: `${completed} done` },
           { label: 'Remaining',  value: String(total - completed), sub: 'to go' },
         ].map(s => (
           <div key={s.label} className="bg-white/70 rounded-2xl p-3">
@@ -728,14 +975,14 @@ function KittenAvatar() {
 export default function Itinerary() {
   const { trip } = useTrip();
 
-  const [days,         setDays]         = useState<ItineraryDay[]>([]);
-  const [dbLoading,    setDbLoading]    = useState(true);
-  const [activeDay,    setActiveDay]    = useState(0);
-  const [dayNotes,     setDayNotes]     = useState<Record<number, string>>({});
-  const [saving,       setSaving]       = useState(false);
-  const [saveError,    setSaveError]    = useState<string | null>(null);
-  const [modalMode,    setModalMode]    = useState<null | 'add' | string>(null);
-  const [form,         setForm]         = useState<FormState>(BLANK_FORM);
+  const [days,          setDays]          = useState<ItineraryDay[]>([]);
+  const [dbLoading,     setDbLoading]     = useState(true);
+  const [activeDay,     setActiveDay]     = useState(0);
+  const [dayNotes,      setDayNotes]      = useState<Record<number, string>>({});
+  const [saving,        setSaving]        = useState(false);
+  const [saveError,     setSaveError]     = useState<string | null>(null);
+  const [modalMode,     setModalMode]     = useState<null | 'add' | string>(null);
+  const [form,          setForm]          = useState<FormState>(BLANK_FORM);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   // Re-render once a minute so statuses stay in sync with the clock
@@ -748,7 +995,8 @@ export default function Itinerary() {
   useEffect(() => {
     if (!trip) { setDbLoading(false); return; }
     loadItinerary(trip.id).then((remote: ItineraryDay[] | null) => {
-      setDays(remote?.length ? remote : buildEmptyDays(trip.startDate, trip.endDate));
+      const base = remote?.length ? remote : buildEmptyDays(trip.startDate, trip.endDate);
+      setDays(injectPinnedActivities(base, trip.destination));
       setDbLoading(false);
     });
   }, [trip]);
@@ -779,13 +1027,24 @@ export default function Itinerary() {
     return hasConflict(form.timeStart, form.timeEnd, day.activities as RichActivity[], excludeId);
   }, [form.timeStart, form.timeEnd, day, modalMode, isEditing]);
 
-  // ── KEY FIX: persist now awaits the save and shows errors ──
+  // Strip pinned activities before saving (they are re-injected on load)
+  const stripPinned = (ds: ItineraryDay[]): ItineraryDay[] =>
+    ds.map(d => ({
+      ...d,
+      activities: d.activities.filter(
+        (a: ItineraryActivity) => a.id !== '__departure__' && a.id !== '__return__'
+      ),
+    }));
+
   const persist = useCallback(async (next: ItineraryDay[]) => {
-    setDays(next);
+    // Re-inject pinned before setting local state so UI stays consistent
+    const withPinned = trip ? injectPinnedActivities(next, trip.destination) : next;
+    setDays(withPinned);
     if (!trip) return;
     setSaving(true);
     setSaveError(null);
-    const result = await saveItinerary(trip.id, next);
+    // Save without pinned (they auto-inject on load, no need to persist)
+    const result = await saveItinerary(trip.id, stripPinned(next));
     setSaving(false);
     if (!result.success) {
       setSaveError(result.error ?? 'Failed to save. Please try again.');
@@ -852,7 +1111,10 @@ export default function Itinerary() {
       if (modalMode === 'add') {
         acts = [...(d.activities as RichActivity[]), { id: crypto.randomUUID(), ...base }];
       } else {
-        acts = (d.activities as RichActivity[]).map(a => a.id === modalMode ? { ...a, ...base } : a);
+        // When editing a pinned activity, preserve isPinned flag
+        acts = (d.activities as RichActivity[]).map(a =>
+          a.id === modalMode ? { ...a, ...base } : a
+        );
       }
       return { ...d, activities: acts.sort((a, b) => a.time.localeCompare(b.time)) };
     });
@@ -1016,7 +1278,11 @@ export default function Itinerary() {
 
       {/* ── Day progress ── */}
       {day && day.activities.length > 0 && (
-        <DayProgress total={day.activities.length} completed={completedCount} />
+        <DayProgress
+          total={day.activities.length}
+          completed={completedCount}
+          destination={trip.destination}
+        />
       )}
 
       {/* ── Day header ── */}
@@ -1045,17 +1311,31 @@ export default function Itinerary() {
         )}
       </div>
 
-      {/* ── Timeline or empty ── */}
+      {/* ── Timeline ── */}
       {!day || day.activities.length === 0 ? (
         <EmptyItinerary isPast={isDayInPast} onAdd={openAddModal} />
       ) : (
         <div className="px-4 sm:px-6">
+          {/*
+            Layout contract:
+            - Outer wrapper is position:relative
+            - The vertical line is absolute, left=19px (half of 38px node width)
+            - Each row: node is absolute left=0 w-[38px], card has ml-[54px]
+            - This guarantees the line always bisects the node center
+          */}
           <div className="relative">
+            {/* Vertical guide line — left:24 = center of 48px node */}
             <div
-              className="absolute left-[10px] top-3 bottom-3 w-0.5 rounded-full"
-              style={{ background: 'linear-gradient(180deg, #7C5CFF 0%, rgba(139,92,246,0.1) 100%)' }}
+              className="absolute inset-y-0 pointer-events-none"
+              style={{
+                left: 23,
+                width: 2,
+                borderRadius: 9999,
+                background: 'linear-gradient(180deg, rgba(107,56,212,0.25) 0%, rgba(139,92,246,0.06) 100%)',
+              }}
             />
-            <div className="space-y-3 pl-8">
+
+            <div className="space-y-3">
               <AnimatePresence initial={false}>
                 {(day.activities as RichActivity[]).map(activity => (
                   <ActivityCard

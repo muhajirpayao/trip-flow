@@ -1,14 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTrip } from '../context/TripContext';
 import type { Trip } from '../types';
 import OnboardingWizard from '../components/onboarding/OnboardingWizard';
 import { useDestinationWeather, getTimeGreeting } from '../hooks/useDestinationWeather';
+import { useDestinationPhotos } from '../hooks/useDestinationPhotos';
 import { daysUntil, tripDays, fmtDate, fmtShort, fmtCurrency } from '../utils';
 import {
   Calendar, Wallet, MapPin, User,
   Plus, ArrowRight, Trash2, Pencil, X, AlertTriangle,
+  Star, Plane, FileText, WifiOff,
 } from 'lucide-react';
 
 const QUICK = [
@@ -23,15 +25,82 @@ type TravelType = typeof TRAVEL_TYPES[number];
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'PHP', 'AUD', 'CAD', 'SGD'];
 
+const DOC_TYPES = [
+  { icon: FileText, label: 'Passport' },
+  { icon: FileText, label: 'Visa' },
+  { icon: FileText, label: 'Flight ticket' },
+  { icon: FileText, label: 'Hotel booking' },
+];
+
+// ── Offline cache helpers ──────────────────────────────────────────────────
+// We cache the last-known trip under a fixed key so the dashboard can render
+// something useful even with no network (e.g. page refresh while offline).
+const TRIP_CACHE_KEY = 'cached_trip_v1';
+
+function cacheTrip(trip: Trip | null) {
+  try {
+    if (trip) localStorage.setItem(TRIP_CACHE_KEY, JSON.stringify(trip));
+  } catch {
+    // localStorage can throw in some private-browsing modes — fail silently
+  }
+}
+
+function readCachedTrip(): Trip | null {
+  try {
+    const raw = localStorage.getItem(TRIP_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as Trip) : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Skeleton block (matches the gray pulsing skeleton look) ───────────────
+function Skeleton({ className = '' }: { className?: string }) {
+  return <div className={`animate-pulse bg-slate-200/80 ${className}`} />;
+}
+
 export default function Dashboard() {
-  const { trip, clearTrip, deleteTrip, updateTrip } = useTrip();
-  const [showOnboarding, setShowOnboarding] = useState(!trip);
+  const { trip: liveTrip, clearTrip, deleteTrip, updateTrip } = useTrip();
+  const [showOnboarding, setShowOnboarding] = useState(!liveTrip);
   const [confirmRemove, setConfirmRemove]   = useState(false);
   const [removing, setRemoving]             = useState(false);
   const [showEditModal, setShowEditModal]   = useState(false);
   const [saving, setSaving]                 = useState(false);
   const [showAvatarMenu, setShowAvatarMenu] = useState(false);
+  const [photoError, setPhotoError]         = useState(false);
+  const [photoLoaded, setPhotoLoaded]       = useState(false);
+  const [isOffline, setIsOffline]           = useState(!navigator.onLine);
+  const [usingCache, setUsingCache]         = useState(false);
   const navigate = useNavigate();
+
+  // Keep the cache fresh whenever we get real trip data, and listen for
+  // online/offline transitions so the banner stays accurate.
+  useEffect(() => {
+    if (liveTrip) {
+      cacheTrip(liveTrip);
+      setUsingCache(false);
+    }
+  }, [liveTrip]);
+
+  useEffect(() => {
+    const goOnline  = () => setIsOffline(false);
+    const goOffline = () => setIsOffline(true);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
+
+  // Fall back to the cached trip if there's no live trip yet (e.g. offline
+  // reload) — this is what lets the dashboard render without a network call.
+  const cachedTrip = !liveTrip ? readCachedTrip() : null;
+  const trip = liveTrip ?? cachedTrip;
+
+  useEffect(() => {
+    if (!liveTrip && cachedTrip) setUsingCache(true);
+  }, [liveTrip, cachedTrip]);
 
   const [editForm, setEditForm] = useState({
     displayName: '',
@@ -46,7 +115,7 @@ export default function Dashboard() {
   // ── No trip state ──
   if (!trip && !showOnboarding) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[80vh] px-6 text-center">
+      <div className="flex flex-col items-center justify-center min-h-[80vh] px-6 text-center bg-gradient-to-br from-slate-50 via-violet-50/30 to-pink-50/20">
         <motion.div
           animate={{ y: [0, -10, 0] }}
           transition={{ repeat: Infinity, duration: 3, ease: 'easeInOut' }}
@@ -64,7 +133,6 @@ export default function Dashboard() {
         </button>
         {showOnboarding && <OnboardingWizard onClose={() => setShowOnboarding(false)} />}
       </div>
-      
     );
   }
 
@@ -76,8 +144,22 @@ export default function Dashboard() {
 
   const { weather } = useDestinationWeather(trip.destination);
   const { label: timeGreeting } = getTimeGreeting();
+  const { hero } = useDestinationPhotos(trip.destination);
   const firstName = (trip.displayName || 'Traveler').split(' ')[0];
   const cityShort = trip.destination.split(',')[0];
+
+  const temp = (weather as any)?.temp ?? (weather as any)?.temperature;
+
+  // Date badges for Upcoming Events
+  const startObj = new Date(`${trip.startDate}T00:00:00`);
+  const nextObj = new Date(startObj);
+  nextObj.setDate(startObj.getDate() + 1);
+  const monthDay = (d: Date) => ({
+    month: d.toLocaleDateString('en-US', { month: 'short' }),
+    day: d.getDate(),
+  });
+  const departureBadge = monthDay(startObj);
+  const nextDayBadge = monthDay(nextObj);
 
   // ── Remove trip ──
   const handleRemoveTrip = async () => {
@@ -85,7 +167,12 @@ export default function Dashboard() {
     const ok = await deleteTrip();
     setRemoving(false);
     setConfirmRemove(false);
-    if (ok) { clearTrip(); navigate('/dashboard'); }
+    if (ok) {
+      cacheTrip(null);
+      localStorage.removeItem(TRIP_CACHE_KEY);
+      clearTrip();
+      navigate('/dashboard');
+    }
   };
 
   // ── Open edit modal ──
@@ -129,14 +216,9 @@ export default function Dashboard() {
   // ─────────────────────────────────────────────────────────────────────────────
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25, ease: 'easeOut' }}
-    >
+    <div className="relative min-h-screen bg-gradient-to-br from-slate-50 via-violet-50/30 to-pink-50/20">
       {/* Decorative background blobs */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
-        
         <div className="absolute -top-16 -right-16 w-52 h-52 rounded-full opacity-[0.11]"
           style={{ background: '#7C5CFF' }} />
         <div className="absolute bottom-40 -left-10 w-36 h-36 rounded-full opacity-[0.08]"
@@ -145,8 +227,23 @@ export default function Dashboard() {
           style={{ background: '#C7E9FF' }} />
       </div>
 
+      {/* Offline / cached-data banner */}
+      <AnimatePresence>
+        {(isOffline || usingCache) && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+            className="relative z-20 flex items-center justify-center gap-2 bg-amber-50 text-amber-700 text-xs font-semibold py-2"
+          >
+            <WifiOff size={13} />
+            {isOffline ? "You're offline — showing your last saved trip" : 'Showing cached trip data'}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ── Header ── */}
-      
       <div
         className="pt-12 pb-20 px-4 sm:px-5 relative overflow-hidden"
         style={{ background: 'linear-gradient(135deg, #7C5CFF 0%, #8B5CF6 100%)' }}
@@ -155,7 +252,6 @@ export default function Dashboard() {
         <div className="absolute -bottom-8 left-8 w-32 h-32 rounded-full bg-white/[0.07]" />
         <div className="relative z-10 flex justify-between items-start gap-3">
           <div className="min-w-0">
-            {/* Location pill */}
             <div className="flex items-center gap-1 text-violet-200/70 text-xs font-semibold mb-2">
               <MapPin size={12} />
               <span className="truncate">{cityShort}</span>
@@ -176,19 +272,10 @@ export default function Dashboard() {
             </p>
           </div>
 
-          {/* Avatar with edit/delete menu */}
           <div className="relative flex-shrink-0">
-            <button
-              onClick={() => setShowAvatarMenu(v => !v)}
-              className="w-11 h-11 rounded-full bg-white/20 border-2 border-white/30 flex items-center justify-center overflow-hidden"
-            >
-              <User size={20} className="text-white/70" />
-            </button>
-
             <AnimatePresence>
               {showAvatarMenu && (
                 <>
-                  {/* Click-away backdrop */}
                   <div
                     className="fixed inset-0 z-40"
                     onClick={() => setShowAvatarMenu(false)}
@@ -226,163 +313,313 @@ export default function Dashboard() {
       <div className="px-3 sm:px-4 -mt-10 pb-6 relative z-10 space-y-4">
 
         {/* ── Countdown card ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.05 }}
-          className="bg-white rounded-3xl p-4 sm:p-5 shadow-[0_4px_24px_rgba(124,92,255,0.10)] flex items-center gap-3 sm:gap-4"
-        >
-          <div
-            className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex flex-col items-center justify-center text-white flex-shrink-0"
-            style={{ background: 'linear-gradient(135deg, #C7E9FF, #7C5CFF)' }}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key="countdown"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 8 }}
+            transition={{ duration: 0.2 }}
+            className="bg-white rounded-3xl p-4 sm:p-5 shadow-[0_4px_24px_rgba(124,92,255,0.10)] flex items-center gap-3 sm:gap-4"
           >
-            <span className="text-xl sm:text-2xl font-black leading-none">{days}</span>
-            <span className="text-[10px] font-semibold opacity-80">days</span>
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-0.5">
-              Departure countdown
-            </p>
-            <p className="text-sm font-bold text-slate-900 truncate">
-              {fmtShort(trip.startDate)} → {fmtDate(trip.endDate)}
-            </p>
-            <p className="text-xs text-slate-500 truncate">
-              {total} days · {trip.travelType.charAt(0).toUpperCase() + trip.travelType.slice(1)} trip {typeIcon}
-            </p>
-          </div>
-          <div className="text-2xl sm:text-3xl flex-shrink-0">✈️</div>
-        </motion.div>
-
-        {/* ── Stats grid ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.10 }}
-          className="grid grid-cols-2 gap-2.5 sm:gap-3"
-        >
-          {[
-            { icon: '📅', label: 'Total Days', value: total.toString(),                        sub: 'days of travel',  small: false },
-            { icon: '💰', label: 'Budget',     value: fmtCurrency(trip.budget, trip.currency), sub: 'total budget',    small: true  },
-            { icon: '📍', label: 'Places',     value: '0',                                     sub: 'saved spots',     small: false },
-            { icon: '✅', label: 'Activities', value: '0',                                     sub: 'planned so far',  small: false },
-          ].map(s => (
-            <div key={s.label} className="bg-white rounded-2xl p-3 sm:p-4 shadow-[0_2px_12px_rgba(0,0,0,0.05)] min-w-0">
-              <div className="text-xl mb-2">{s.icon}</div>
-              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-0.5 truncate">
-                {s.label}
-              </p>
-              <p className={`font-black text-slate-900 leading-tight truncate ${s.small ? 'text-sm sm:text-base' : 'text-xl sm:text-2xl'}`}>
-                {s.value}
-              </p>
-              <p className="text-[11px] text-slate-400 mt-0.5 truncate">{s.sub}</p>
+            <div
+              className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex flex-col items-center justify-center text-white flex-shrink-0"
+              style={{ background: 'linear-gradient(135deg, #C7E9FF, #7C5CFF)' }}
+            >
+              <span className="text-xl sm:text-2xl font-black leading-none">{days}</span>
+              <span className="text-[10px] font-semibold opacity-80">days</span>
             </div>
-          ))}
-        </motion.div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-0.5">
+                Departure countdown
+              </p>
+              <p className="text-sm font-bold text-slate-900 truncate">
+                {fmtShort(trip.startDate)} → {fmtDate(trip.endDate)}
+              </p>
+              <p className="text-xs text-slate-500 truncate">
+                {total} days · {trip.travelType.charAt(0).toUpperCase() + trip.travelType.slice(1)} trip {typeIcon}
+              </p>
+            </div>
+            <div className="text-2xl sm:text-3xl flex-shrink-0">✈️</div>
+          </motion.div>
+        </AnimatePresence>
+
+        {/* ── Trip details — MOVED HERE, above Quick Access ── */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key="trip-details"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 8 }}
+            transition={{ duration: 0.2, delay: 0.03 }}
+          >
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-base font-black text-slate-900">Trip details</h2>
+            </div>
+
+            <div className="bg-white rounded-3xl overflow-hidden shadow-[0_2px_12px_rgba(0,0,0,0.05)] flex flex-col sm:flex-row sm:h-60">
+              {/* Photo with skeleton loading */}
+              <div className="relative w-full sm:w-2/5 h-40 sm:h-full flex-shrink-0 overflow-hidden bg-slate-100">
+                {hero && !photoError ? (
+                  <>
+                    {!photoLoaded && (
+                      <Skeleton className="absolute inset-0 w-full h-full" />
+                    )}
+                    <img
+                      src={hero}
+                      alt={trip.destination}
+                      onLoad={() => setPhotoLoaded(true)}
+                      onError={() => setPhotoError(true)}
+                      className={`w-full h-full object-cover transition-opacity duration-300 ${
+                        photoLoaded ? 'opacity-100' : 'opacity-0'
+                      }`}
+                    />
+                  </>
+                ) : !hero && !photoError ? (
+                  // Still resolving the hero photo URL — show skeleton instead of icon
+                  <Skeleton className="w-full h-full" />
+                ) : (
+                  <div
+                    className="w-full h-full flex items-center justify-center"
+                    style={{ background: 'linear-gradient(135deg, #C7E9FF, #7C5CFF)' }}
+                  >
+                    <MapPin className="text-white/70" size={28} />
+                  </div>
+                )}
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 p-4 sm:p-5 flex flex-col justify-center gap-3 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-violet-50 text-violet-600 w-fit">
+                    <Star size={12} />
+                    <span className="text-[10px] font-bold uppercase tracking-wide">Primary trip</span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={openEditModal}
+                      className="text-violet-500 hover:text-violet-700 transition-colors p-1 rounded-lg hover:bg-violet-50"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <span className="text-xs font-semibold text-violet-600 bg-violet-50 px-3 py-1 rounded-full">
+                      {trip.travelType}
+                    </span>
+                  </div>
+                </div>
+
+                <h3 className="text-lg sm:text-xl font-black text-slate-900 truncate">
+                  {trip.destination}
+                </h3>
+
+                <div className="flex flex-col gap-2 text-sm text-slate-500">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Calendar size={14} className="text-violet-500 flex-shrink-0" />
+                    <span className="truncate">{fmtDate(trip.startDate)} → {fmtDate(trip.endDate)}</span>
+                  </div>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <MapPin size={14} className="text-violet-500 flex-shrink-0" />
+                    <span className="truncate">{trip.destination}</span>
+                  </div>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Wallet size={14} className="text-violet-500 flex-shrink-0" />
+                    <span className="truncate">{fmtCurrency(trip.budget, trip.currency)} · {total} days</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </AnimatePresence>
 
         {/* ── Quick access ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15 }}
-        >
-          <h2 className="text-base font-black text-slate-900 mb-3">Quick access</h2>
-          <div className="grid grid-cols-4 gap-2">
-            {QUICK.map(({ icon: Icon, label, to, color }) => (
-              <motion.button
-                key={label}
-                onClick={() => navigate(to)}
-                whileHover={{ y: -2 }}
-                whileTap={{ scale: 0.93 }}
-                className="bg-white rounded-2xl py-3 px-2 flex flex-col items-center gap-1.5 shadow-[0_2px_12px_rgba(0,0,0,0.05)]"
-              >
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${color}`}>
-                  <Icon size={16} />
-                </div>
-                <span className="text-[10px] font-semibold text-slate-600 text-center leading-tight">
-                  {label}
-                </span>
-              </motion.button>
-            ))}
-          </div>
-        </motion.div>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key="quick-access"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 8 }}
+            transition={{ duration: 0.2, delay: 0.06 }}
+          >
+            <h2 className="text-base font-black text-slate-900 mb-3">Quick access</h2>
+            <div className="grid grid-cols-4 gap-2">
+              {QUICK.map(({ icon: Icon, label, to, color }) => (
+                <button
+                  key={label}
+                  onClick={() => navigate(to)}
+                  className="bg-white rounded-2xl py-3 px-2 flex flex-col items-center gap-1.5 shadow-[0_2px_12px_rgba(0,0,0,0.05)] active:scale-95 transition-transform"
+                >
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${color}`}>
+                    <Icon size={16} />
+                  </div>
+                  <span className="text-[10px] font-semibold text-slate-600 text-center leading-tight">
+                    {label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        </AnimatePresence>
 
-        {/* ── Trip details ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.20 }}
-          className="bg-white rounded-3xl p-4 sm:p-5 shadow-[0_2px_12px_rgba(0,0,0,0.05)]"
-        >
-          <div className="flex justify-between items-center mb-4 gap-2">
-            <h2 className="text-base font-black text-slate-900">Trip details</h2>
-            <div className="flex items-center gap-2">
+        {/* ── Stats grid ── */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key="stats"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 8 }}
+            transition={{ duration: 0.2, delay: 0.09 }}
+            className="grid grid-cols-2 gap-2.5 sm:gap-3"
+          >
+            {[
+              { icon: '📅', label: 'Total Days', value: total.toString(),                        sub: 'days of travel',  small: false },
+              { icon: '💰', label: 'Budget',     value: fmtCurrency(trip.budget, trip.currency), sub: 'total budget',    small: true  },
+              { icon: '📍', label: 'Places',     value: '0',                                     sub: 'saved spots',     small: false },
+              { icon: '✅', label: 'Activities', value: '0',                                     sub: 'planned so far',  small: false },
+            ].map(s => (
+              <div key={s.label} className="bg-white rounded-2xl p-3 sm:p-4 shadow-[0_2px_12px_rgba(0,0,0,0.05)] min-w-0">
+                <div className="text-xl mb-2">{s.icon}</div>
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-0.5 truncate">
+                  {s.label}
+                </p>
+                <p className={`font-black text-slate-900 leading-tight truncate ${s.small ? 'text-sm sm:text-base' : 'text-xl sm:text-2xl'}`}>
+                  {s.value}
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5 truncate">{s.sub}</p>
+              </div>
+            ))}
+          </motion.div>
+        </AnimatePresence>
+
+        {/* ── Current Weather ── */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key="weather"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 8 }}
+            transition={{ duration: 0.2, delay: 0.12 }}
+            className="bg-white rounded-3xl p-4 sm:p-5 shadow-[0_2px_12px_rgba(0,0,0,0.05)] flex items-center gap-4"
+          >
+            <div
+              className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 text-2xl sm:text-3xl"
+              style={{ background: 'linear-gradient(135deg, #C7E9FF, #7C5CFF)' }}
+            >
+              {weather?.emoji ?? '🌤️'}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-0.5">
+                Current weather · {cityShort}
+              </p>
+              <p className="text-base sm:text-lg font-black text-slate-900 truncate">
+                {weather
+                  ? `${temp !== undefined ? `${temp}°, ` : ''}${weather.description}`
+                  : 'Fetching weather…'}
+              </p>
+            </div>
+          </motion.div>
+        </AnimatePresence>
+
+        {/* ── Upcoming events ── */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key="events"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 8 }}
+            transition={{ duration: 0.2, delay: 0.15 }}
+          >
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-base font-black text-slate-900">Upcoming events</h2>
               <button
-                onClick={openEditModal}
-                className="text-violet-500 hover:text-violet-700 transition-colors p-1 rounded-lg hover:bg-violet-50"
+                onClick={() => navigate('/dashboard/itinerary')}
+                className="flex items-center gap-1 text-xs font-semibold text-violet-500"
               >
-                <Pencil size={14} />
+                View all <ArrowRight size={12} />
               </button>
-              <span className="text-xs font-semibold text-violet-600 bg-violet-50 px-3 py-1 rounded-full flex-shrink-0">
-                {trip.travelType}
+            </div>
+
+            <div className="space-y-2.5">
+              <div className="bg-white rounded-2xl p-3.5 sm:p-4 shadow-[0_2px_12px_rgba(0,0,0,0.05)] flex items-center gap-3 sm:gap-4 border-l-4 border-violet-400">
+                <div className="text-center min-w-[40px] flex-shrink-0">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase">{departureBadge.month}</p>
+                  <p className="text-lg font-black text-slate-900 leading-none">{departureBadge.day}</p>
+                </div>
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ background: 'linear-gradient(135deg, #C7E9FF, #7C5CFF)' }}
+                >
+                  <Plane size={16} className="text-white" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-slate-900 truncate">Flight to {cityShort}</p>
+                  <p className="text-xs text-slate-400 truncate">
+                    {days === 0 ? 'Departing today' : `Departing in ${days} day${days === 1 ? '' : 's'}`}
+                  </p>
+                </div>
+                <ArrowRight size={14} className="text-slate-300 flex-shrink-0" />
+              </div>
+
+              <div className="bg-white rounded-2xl p-3.5 sm:p-4 shadow-[0_2px_12px_rgba(0,0,0,0.05)] flex items-center gap-3 sm:gap-4 opacity-70">
+                <div className="text-center min-w-[40px] flex-shrink-0">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase">{nextDayBadge.month}</p>
+                  <p className="text-lg font-black text-slate-900 leading-none">{nextDayBadge.day}</p>
+                </div>
+                <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center flex-shrink-0">
+                  <span className="text-base">🗓️</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-slate-900 truncate">No activities planned yet</p>
+                  <p className="text-xs text-slate-400 truncate">Add stops to your itinerary</p>
+                </div>
+                <button
+                  onClick={() => navigate('/dashboard/itinerary')}
+                  className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-white"
+                  style={{ background: 'linear-gradient(135deg, #7C5CFF, #8B5CF6)' }}
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </AnimatePresence>
+
+        {/* ── Documents ── */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key="documents"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 8 }}
+            transition={{ duration: 0.2, delay: 0.18 }}
+            className="bg-white rounded-3xl p-4 sm:p-5 shadow-[0_2px_12px_rgba(0,0,0,0.05)]"
+          >
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-base font-black text-slate-900">Documents</h2>
+              <span className="text-xs font-semibold text-violet-600 bg-violet-50 px-3 py-1 rounded-full">
+                0 added
               </span>
             </div>
-          </div>
-          {[
-            { label: 'Name',        value: trip.displayName || '—' },
-            { label: 'Destination', value: trip.destination },
-            { label: 'Departure',   value: fmtDate(trip.startDate) },
-            { label: 'Return',      value: fmtDate(trip.endDate) },
-            { label: 'Duration',    value: `${total} days` },
-            { label: 'Budget',      value: fmtCurrency(trip.budget, trip.currency) },
-          ].map(({ label, value }, i, arr) => (
-            <div
-              key={label}
-              className={`flex justify-between items-center gap-3 py-3 ${i < arr.length - 1 ? 'border-b border-slate-50' : ''}`}
-            >
-              <span className="text-sm text-slate-400 flex-shrink-0">{label}</span>
-              <span className="text-sm font-semibold text-slate-900 truncate text-right">{value}</span>
+            <div className="grid grid-cols-2 gap-2.5">
+              {DOC_TYPES.map(d => (
+                <button
+                  key={d.label}
+                  className="flex items-center gap-2.5 bg-slate-50/60 rounded-2xl p-3 text-left hover:bg-violet-50 transition-colors"
+                >
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ background: 'linear-gradient(135deg, #C7E9FF, #7C5CFF)' }}
+                  >
+                    <d.icon size={14} className="text-white" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-slate-700 truncate">{d.label}</p>
+                    <p className="text-[10px] text-slate-400">Tap to add</p>
+                  </div>
+                </button>
+              ))}
             </div>
-          ))}
-        </motion.div>
-
-        {/* ── Recent activity ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.25 }}
-        >
-          <div className="flex justify-between items-center mb-3">
-            <h2 className="text-base font-black text-slate-900">Recent activity</h2>
-            <button
-              onClick={() => navigate('/dashboard/itinerary')}
-              className="flex items-center gap-1 text-xs font-semibold text-violet-500"
-            >
-              View all <ArrowRight size={12} />
-            </button>
-          </div>
-          <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-[0_2px_12px_rgba(0,0,0,0.05)] text-center">
-            <motion.div
-              className="text-5xl mb-3"
-              animate={{ y: [0, -8, 0] }}
-              transition={{ repeat: Infinity, duration: 3, ease: 'easeInOut' }}
-            >
-              🌅
-            </motion.div>
-            <h3 className="text-base font-black text-slate-900 mb-2">Your adventure begins here</h3>
-            <p className="text-sm text-slate-400 leading-relaxed mb-5">
-              Add itinerary items, log expenses, and save places to see your activity here.
-            </p>
-            <motion.button
-              onClick={() => navigate('/dashboard/itinerary')}
-              whileHover={{ scale: 1.03 }}
-              whileTap={{ scale: 0.96 }}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-white text-sm font-bold shadow-[0_6px_18px_rgba(124,92,255,0.35)]"
-              style={{ background: 'linear-gradient(135deg, #7C5CFF 0%, #8B5CF6 100%)' }}
-            >
-              <Plus size={14} /> Start planning
-            </motion.button>
-          </div>
-        </motion.div>
+          </motion.div>
+        </AnimatePresence>
 
       </div>
 
@@ -414,7 +651,6 @@ export default function Dashboard() {
               </div>
 
               <div className="space-y-4">
-                {/* Name */}
                 <div>
                   <label className="text-xs font-bold text-slate-500 mb-1.5 block">Your name</label>
                   <input
@@ -425,7 +661,6 @@ export default function Dashboard() {
                   />
                 </div>
 
-                {/* Destination */}
                 <div>
                   <label className="text-xs font-bold text-slate-500 mb-1.5 block">Destination</label>
                   <input
@@ -436,7 +671,6 @@ export default function Dashboard() {
                   />
                 </div>
 
-                {/* Dates */}
                 <div className="flex gap-3">
                   <div className="flex-1">
                     <label className="text-xs font-bold text-slate-500 mb-1.5 block">Departure</label>
@@ -459,7 +693,6 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Budget & currency */}
                 <div className="flex gap-3">
                   <div className="flex-1">
                     <label className="text-xs font-bold text-slate-500 mb-1.5 block">Budget</label>
@@ -484,7 +717,6 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Travel type */}
                 <div>
                   <label className="text-xs font-bold text-slate-500 mb-2 block">Travel type</label>
                   <div className="grid grid-cols-4 gap-2">
@@ -574,7 +806,6 @@ export default function Dashboard() {
           </motion.div>
         )}
       </AnimatePresence>
-
-    </motion.div>
+    </div>
   );
 }

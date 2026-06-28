@@ -9,14 +9,13 @@ import NotificationsPage from '../pages/NotificationsPage';
 
 const AuthPage   = lazy(() => import('../pages/AuthPage'));
 const Home       = lazy(() => import('../pages/Home'));
-const Dashboard  = lazy(() => import('../pages/Dashboard'));
+const Dashboard   = lazy(() => import('../pages/Dashboard'));
 const Itinerary  = lazy(() => import('../pages/Itinerary'));
 const Expenses   = lazy(() => import('../pages/Expenses'));
 const Places     = lazy(() => import('../pages/Places'));
 const Profile    = lazy(() => import('../pages/Profile'));
 const Settings   = lazy(() => import('../pages/Settings'));
 
-// Flip this to false when you're ready to launch the real app.
 const UNDER_DEVELOPMENT = false;
 
 const Loader = () => (
@@ -41,15 +40,10 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
 const router = UNDER_DEVELOPMENT
   ? createBrowserRouter([
-      // While under development, every path shows the same page.
-      // No login, no auth check, nothing else loads.
       { path: '*', element: <UnderDevelopment /> },
     ])
   : createBrowserRouter([
-      {
-        path: '/',
-        element: <LandingPage />,
-      },
+      { path: '/', element: <LandingPage /> },
       {
         path: '/auth',
         element: (
@@ -66,12 +60,13 @@ const router = UNDER_DEVELOPMENT
           </RequireAuth>
         ),
         children: [
-          { index: true,            element: <Home /> },
-          { path: 'trip',           element: <Dashboard /> },
+          { index: true,            element: <Dashboard /> },   // "/dashboard" → Dashboard.tsx
+          { path: 'home',           element: <Home /> },         // "/dashboard/home" → Home.tsx
+          { path: 'trip',           element: <Dashboard /> },     // kept for any old links
           { path: 'itinerary',      element: <Itinerary /> },
           { path: 'expenses',       element: <Expenses /> },
           { path: 'places',         element: <Places /> },
-          { path: 'profile',        element: <Profile /> },
+          { path: 'profile',        element: <Profile /> },       // route kept for deep links
           { path: 'settings',       element: <Settings /> },
           { path: 'notifications',  element: <NotificationsPage /> },
         ],
