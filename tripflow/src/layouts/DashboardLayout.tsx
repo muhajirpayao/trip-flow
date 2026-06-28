@@ -15,7 +15,6 @@ const NAV_ITEMS = [
   { to: '/dashboard/trip',      icon: LayoutDashboard, label: 'Dashboard' },
 ];
 
-// Pages where the bell + profile icon should appear
 const SHOW_HEADER_ICONS_ON = ['/dashboard/home', '/dashboard/trip', '/dashboard'];
 
 function useHideOnScroll() {
@@ -113,7 +112,6 @@ export default function DashboardLayout() {
     <div className="flex flex-col min-h-screen w-full bg-slate-50">
       <NotificationToast notification={latestNew} onDismiss={dismissToast} />
 
-      {/* ── Top-right cluster: bell + profile — Home & Dashboard only ── */}
       {showHeaderIcons && (
         <div className="fixed top-4 right-4 z-40 flex items-center gap-2">
           <NotificationBell unreadCount={unreadCount} />
@@ -125,6 +123,7 @@ export default function DashboardLayout() {
         <Outlet />
       </main>
 
+      {/* ── Bottom Nav with violet gradient ── */}
       <nav
         className={`
           fixed bottom-4 left-4 right-4 h-14

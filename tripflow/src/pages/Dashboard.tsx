@@ -6,7 +6,7 @@ import type { Trip } from '../types';
 import OnboardingWizard from '../components/onboarding/OnboardingWizard';
 import { useDestinationWeather, getTimeGreeting } from '../hooks/useDestinationWeather';
 import { useDestinationPhotos } from '../hooks/useDestinationPhotos';
-import { daysUntil, tripDays, fmtDate, fmtShort, fmtCurrency } from '../utils';
+import {tripDays, fmtDate, fmtShort, fmtCurrency } from '../utils';
 import {
   Calendar, Wallet, MapPin, User,
   Plus, ArrowRight, Trash2, Pencil, X, AlertTriangle,
@@ -33,8 +33,6 @@ const DOC_TYPES = [
 ];
 
 // ── Offline cache helpers ──────────────────────────────────────────────────
-// We cache the last-known trip under a fixed key so the dashboard can render
-// something useful even with no network (e.g. page refresh while offline).
 const TRIP_CACHE_KEY = 'cached_trip_v1';
 
 function cacheTrip(trip: Trip | null) {
@@ -54,9 +52,53 @@ function readCachedTrip(): Trip | null {
   }
 }
 
-// ── Skeleton block (matches the gray pulsing skeleton look) ───────────────
+// ── Skeleton block ────────────────────────────────────────────────────────
 function Skeleton({ className = '' }: { className?: string }) {
   return <div className={`animate-pulse bg-slate-200/80 ${className}`} />;
+}
+
+// ── Circular progress ring for stat cards ─────────────────────────────────
+function StatRing({ pct, icon, id }: { pct: number; icon: string; id: string }) {
+  const r = 18;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (Math.min(100, Math.max(0, pct)) / 100) * circ;
+  return (
+    <div className="relative w-10 h-10 flex-shrink-0">
+      <svg
+        width="40"
+        height="40"
+        viewBox="0 0 44 44"
+        style={{ transform: 'rotate(-90deg)' }}
+        aria-hidden="true"
+      >
+        <defs>
+          <linearGradient id={`ring-grad-${id}`} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#C7E9FF" />
+            <stop offset="100%" stopColor="#7C5CFF" />
+          </linearGradient>
+        </defs>
+        <circle
+          cx="22" cy="22" r={r}
+          fill="none"
+          stroke="#e2e8f0"
+          strokeWidth="3"
+        />
+        <circle
+          cx="22" cy="22" r={r}
+          fill="none"
+          stroke={`url(#ring-grad-${id})`}
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray={circ}
+          strokeDashoffset={offset}
+          style={{ transition: 'stroke-dashoffset 0.6s ease' }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center text-base leading-none">
+        {icon}
+      </div>
+    </div>
+  );
 }
 
 export default function Dashboard() {
@@ -73,8 +115,6 @@ export default function Dashboard() {
   const [usingCache, setUsingCache]         = useState(false);
   const navigate = useNavigate();
 
-  // Keep the cache fresh whenever we get real trip data, and listen for
-  // online/offline transitions so the banner stays accurate.
   useEffect(() => {
     if (liveTrip) {
       cacheTrip(liveTrip);
@@ -93,8 +133,6 @@ export default function Dashboard() {
     };
   }, []);
 
-  // Fall back to the cached trip if there's no live trip yet (e.g. offline
-  // reload) — this is what lets the dashboard render without a network call.
   const cachedTrip = !liveTrip ? readCachedTrip() : null;
   const trip = liveTrip ?? cachedTrip;
 
@@ -138,7 +176,13 @@ export default function Dashboard() {
 
   if (!trip) return showOnboarding ? <OnboardingWizard onClose={() => navigate('/')} /> : null;
 
-  const days     = daysUntil(trip.startDate);
+  // ── daysUntil fixed: floor-based diff so today=0, tomorrow=1 ──
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const startTarget = new Date(`${trip.startDate}T00:00:00`);
+  startTarget.setHours(0, 0, 0, 0);
+  const days = Math.max(0, Math.round((startTarget.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
+
   const total    = tripDays(trip.startDate, trip.endDate);
   const typeIcon = { solo: '🧳', couple: '💑', family: '👨‍👩‍👧', friends: '👯' }[trip.travelType];
 
@@ -159,7 +203,47 @@ export default function Dashboard() {
     day: d.getDate(),
   });
   const departureBadge = monthDay(startObj);
-  const nextDayBadge = monthDay(nextObj);
+  const nextDayBadge   = monthDay(nextObj);
+
+  // Stat card data with ring percentages
+  const STATS = [
+    {
+      id:    'days',
+      icon:  '📅',
+      label: 'Total Days',
+      value: total.toString(),
+      sub:   'days of travel',
+      small: false,
+      pct:   Math.min(100, (total / 30) * 100),
+    },
+    {
+      id:    'budget',
+      icon:  '💰',
+      label: 'Budget',
+      value: fmtCurrency(trip.budget, trip.currency),
+      sub:   'total budget',
+      small: true,
+      pct:   trip.budget > 0 ? 60 : 0,
+    },
+    {
+      id:    'places',
+      icon:  '📍',
+      label: 'Places',
+      value: '0',
+      sub:   'saved spots',
+      small: false,
+      pct:   0,
+    },
+    {
+      id:    'activities',
+      icon:  '✅',
+      label: 'Activities',
+      value: '0',
+      sub:   'planned so far',
+      small: false,
+      pct:   0,
+    },
+  ];
 
   // ── Remove trip ──
   const handleRemoveTrip = async () => {
@@ -213,7 +297,7 @@ export default function Dashboard() {
     editForm.endDate &&
     editForm.endDate >= editForm.startDate;
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
 
   return (
     <div className="relative min-h-screen bg-gradient-to-br from-slate-50 via-violet-50/30 to-pink-50/20">
@@ -268,7 +352,9 @@ export default function Dashboard() {
             <p className="text-violet-200 text-xs">
               {days === 0
                 ? 'Your adventure starts today! 🎉'
-                : `${days} day${days === 1 ? '' : 's'} to departure`}
+                : days === 1
+                ? 'Tomorrow is departure day! ✈️'
+                : `${days} days to departure`}
             </p>
           </div>
 
@@ -312,7 +398,7 @@ export default function Dashboard() {
 
       <div className="px-3 sm:px-4 -mt-10 pb-6 relative z-10 space-y-4">
 
-        {/* ── Countdown card ── */}
+        {/* ── 1. Countdown card ── */}
         <AnimatePresence mode="wait">
           <motion.div
             key="countdown"
@@ -344,14 +430,45 @@ export default function Dashboard() {
           </motion.div>
         </AnimatePresence>
 
-        {/* ── Trip details — MOVED HERE, above Quick Access ── */}
+        {/* ── 2. Stats grid (moved above Trip details) ── */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key="stats"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 8 }}
+            transition={{ duration: 0.2, delay: 0.03 }}
+            className="grid grid-cols-2 gap-2.5 sm:gap-3"
+          >
+            {STATS.map(s => (
+              <div
+                key={s.id}
+                className="bg-white rounded-2xl p-3 sm:p-4 shadow-[0_2px_12px_rgba(0,0,0,0.05)] min-w-0"
+              >
+                {/* Top row: label + ring */}
+                <div className="flex items-center justify-between mb-2 gap-1">
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider truncate">
+                    {s.label}
+                  </p>
+                  <StatRing pct={s.pct} icon={s.icon} id={s.id} />
+                </div>
+                <p className={`font-black text-slate-900 leading-tight truncate ${s.small ? 'text-sm sm:text-base' : 'text-xl sm:text-2xl'}`}>
+                  {s.value}
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5 truncate">{s.sub}</p>
+              </div>
+            ))}
+          </motion.div>
+        </AnimatePresence>
+
+        {/* ── 3. Trip details  ── */}
         <AnimatePresence mode="wait">
           <motion.div
             key="trip-details"
             initial={{ opacity: 0, x: -8 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 8 }}
-            transition={{ duration: 0.2, delay: 0.03 }}
+            transition={{ duration: 0.2, delay: 0.06 }}
           >
             <div className="flex justify-between items-center mb-3">
               <h2 className="text-base font-black text-slate-900">Trip details</h2>
@@ -376,7 +493,6 @@ export default function Dashboard() {
                     />
                   </>
                 ) : !hero && !photoError ? (
-                  // Still resolving the hero photo URL — show skeleton instead of icon
                   <Skeleton className="w-full h-full" />
                 ) : (
                   <div
@@ -423,7 +539,7 @@ export default function Dashboard() {
                   </div>
                   <div className="flex items-center gap-2 min-w-0">
                     <Wallet size={14} className="text-violet-500 flex-shrink-0" />
-                    <span className="truncate">{fmtCurrency(trip.budget, trip.currency)} · {total} days</span>
+                    <span className="truncate">{fmtCurrency(trip.budget, trip.currency)} · {total} days </span>
                   </div>
                 </div>
               </div>
@@ -431,14 +547,14 @@ export default function Dashboard() {
           </motion.div>
         </AnimatePresence>
 
-        {/* ── Quick access ── */}
+        {/* ── 4. Quick access ── */}
         <AnimatePresence mode="wait">
           <motion.div
             key="quick-access"
             initial={{ opacity: 0, x: -8 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 8 }}
-            transition={{ duration: 0.2, delay: 0.06 }}
+            transition={{ duration: 0.2, delay: 0.09 }}
           >
             <h2 className="text-base font-black text-slate-900 mb-3">Quick access</h2>
             <div className="grid grid-cols-4 gap-2">
@@ -460,37 +576,7 @@ export default function Dashboard() {
           </motion.div>
         </AnimatePresence>
 
-        {/* ── Stats grid ── */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key="stats"
-            initial={{ opacity: 0, x: -8 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 8 }}
-            transition={{ duration: 0.2, delay: 0.09 }}
-            className="grid grid-cols-2 gap-2.5 sm:gap-3"
-          >
-            {[
-              { icon: '📅', label: 'Total Days', value: total.toString(),                        sub: 'days of travel',  small: false },
-              { icon: '💰', label: 'Budget',     value: fmtCurrency(trip.budget, trip.currency), sub: 'total budget',    small: true  },
-              { icon: '📍', label: 'Places',     value: '0',                                     sub: 'saved spots',     small: false },
-              { icon: '✅', label: 'Activities', value: '0',                                     sub: 'planned so far',  small: false },
-            ].map(s => (
-              <div key={s.label} className="bg-white rounded-2xl p-3 sm:p-4 shadow-[0_2px_12px_rgba(0,0,0,0.05)] min-w-0">
-                <div className="text-xl mb-2">{s.icon}</div>
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-0.5 truncate">
-                  {s.label}
-                </p>
-                <p className={`font-black text-slate-900 leading-tight truncate ${s.small ? 'text-sm sm:text-base' : 'text-xl sm:text-2xl'}`}>
-                  {s.value}
-                </p>
-                <p className="text-[11px] text-slate-400 mt-0.5 truncate">{s.sub}</p>
-              </div>
-            ))}
-          </motion.div>
-        </AnimatePresence>
-
-        {/* ── Current Weather ── */}
+        {/* ── 5. Current Weather ── */}
         <AnimatePresence mode="wait">
           <motion.div
             key="weather"
@@ -519,7 +605,7 @@ export default function Dashboard() {
           </motion.div>
         </AnimatePresence>
 
-        {/* ── Upcoming events ── */}
+        {/* ── 6. Upcoming events ── */}
         <AnimatePresence mode="wait">
           <motion.div
             key="events"
@@ -553,7 +639,11 @@ export default function Dashboard() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-bold text-slate-900 truncate">Flight to {cityShort}</p>
                   <p className="text-xs text-slate-400 truncate">
-                    {days === 0 ? 'Departing today' : `Departing in ${days} day${days === 1 ? '' : 's'}`}
+                    {days === 0
+                      ? 'Departing today'
+                      : days === 1
+                      ? 'Departing tomorrow!'
+                      : `Departing in ${days} days`}
                   </p>
                 </div>
                 <ArrowRight size={14} className="text-slate-300 flex-shrink-0" />
@@ -583,7 +673,7 @@ export default function Dashboard() {
           </motion.div>
         </AnimatePresence>
 
-        {/* ── Documents ── */}
+        {/* ── 7. Documents ── */}
         <AnimatePresence mode="wait">
           <motion.div
             key="documents"
