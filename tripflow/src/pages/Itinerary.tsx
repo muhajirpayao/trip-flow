@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence, useMotionValue, useTransform, useAnimation } from 'framer-motion';
 import { useTrip } from '../context/TripContext';
 import { tripDays, fmtDate } from '../utils';
-import { loadItinerary, saveItinerary } from '../lib/itineraryService';
+import { loadItinerary, saveItinerary } from '../lib/itineraryServiceCached';
 import type { ItineraryActivity, ItineraryDay } from '../lib/itineraryService';
 import {
   Plus, Clock, MapPin, Trash2, X, Calendar as CalendarIcon,
@@ -368,7 +368,7 @@ function CategoryBadge({ cat }: { cat: CategoryKey }) {
   );
 }
 
-// ─── Timeline Node — SMALLER (36px) ──────────────────────────────────────────
+// ─── Timeline Node — SMALLER (25px) ──────────────────────────────────────────
 
 function TimelineNode({ activity, status }: { activity: RichActivity; status: ActivityStatus }) {
   const catKey = activity.category ?? 'custom';
@@ -378,8 +378,8 @@ function TimelineNode({ activity, status }: { activity: RichActivity; status: Ac
     <motion.div
       className="flex-shrink-0 flex items-center justify-center rounded-full"
       style={{
-        width: 36,
-        height: 36,
+        width: 25,
+        height: 25,
         background: '#7C5CFF',
         border: '3px solid #f3f0ff',
         boxShadow:
@@ -1108,11 +1108,38 @@ export default function Itinerary() {
 
   useEffect(() => {
     if (!trip) { setDbLoading(false); return; }
-    loadItinerary(trip.id).then((remote: ItineraryDay[] | null) => {
-      const base = remote?.length ? remote : buildEmptyDays(trip.startDate, trip.endDate);
-      setDays(injectPinnedActivities(base, trip.destination));
-      setDbLoading(false);
+
+    const cancel = loadItinerary(trip.id, {
+      // ── Fires instantly with whatever is in cache (memory or localStorage) ──
+      onCached: (cached) => {
+        if (cached?.length) {
+          setDays(injectPinnedActivities(cached, trip.destination));
+          setDbLoading(false); // show cached UI immediately — no spinner needed
+        }
+        // If no cache, keep spinner until onFresh arrives
+      },
+      // ── Fires when fresh network data arrives and it differs from cached ──
+      onFresh: (fresh) => {
+        const base = fresh.length ? fresh : buildEmptyDays(trip.startDate, trip.endDate);
+        setDays(injectPinnedActivities(base, trip.destination));
+        setDbLoading(false);
+      },
+      // ── Network failed — if we had cached data it's already shown; otherwise show empty ──
+      onError: () => {
+        setDbLoading(prev => {
+          // Only flip to false if we're still waiting (no cache was served)
+          if (prev) {
+            setDays(injectPinnedActivities(
+              buildEmptyDays(trip.startDate, trip.endDate),
+              trip.destination
+            ));
+          }
+          return false;
+        });
+      },
     });
+
+    return cancel; // cancels in-flight fetch on unmount / trip change
   }, [trip]);
 
   const totalActivities = useMemo(
