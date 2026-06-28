@@ -112,8 +112,12 @@ export default function DashboardLayout() {
     <div className="flex flex-col min-h-screen w-full bg-slate-50">
       <NotificationToast notification={latestNew} onDismiss={dismissToast} />
 
+      {/* ── Fixed top-right icon bar — always stays at top regardless of scroll ── */}
       {showHeaderIcons && (
-        <div className="fixed top-4 right-4 z-40 flex items-center gap-2">
+        <div
+          className="fixed top-0 right-0 z-40 flex items-center gap-2 px-4 pt-4 pb-2"
+          // No background — sits on top of whatever the page header color is
+        >
           <NotificationBell unreadCount={unreadCount} />
           <ProfileMenu />
         </div>
@@ -123,7 +127,7 @@ export default function DashboardLayout() {
         <Outlet />
       </main>
 
-      {/* ── Bottom Nav with violet gradient ── */}
+      {/* ── Bottom Nav ── */}
       <nav
         className={`
           fixed bottom-4 left-4 right-4 h-14

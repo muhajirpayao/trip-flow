@@ -17,7 +17,7 @@ const QUICK = [
   { icon: Calendar, label: 'Itinerary', to: '/dashboard/itinerary', color: 'bg-indigo-50 text-indigo-600' },
   { icon: Wallet,   label: 'Expenses',  to: '/dashboard/expenses',  color: 'bg-emerald-50 text-emerald-600' },
   { icon: MapPin,   label: 'Places',    to: '/dashboard/places',    color: 'bg-rose-50 text-rose-500' },
-  { icon: User,     label: 'Profile',   to: '/dashboard/profile',   color: 'bg-violet-50 text-violet-500' },
+  // { icon: User,     label: 'Profile',   to: '/dashboard/profile',   color: 'bg-violet-50 text-violet-500' },
 ];
 
 const TRAVEL_TYPES = ['solo', 'couple', 'family', 'friends'] as const;

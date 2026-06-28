@@ -59,7 +59,7 @@ function useWeather(destination: string): WeatherData {
   return weather;
 }
 
-// ─── Category icons (smaller, 16px) ──────────────────────────────────────────
+// ─── Category icons ───────────────────────────────────────────────────────────
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
   flight: (
@@ -219,8 +219,6 @@ function hasConflict(
   return null;
 }
 
-// ─── Check if an activity conflicts with any other activity ──────────────────
-
 function getConflictingActivity(
   activity: RichActivity,
   allActivities: RichActivity[]
@@ -368,7 +366,7 @@ function CategoryBadge({ cat }: { cat: CategoryKey }) {
   );
 }
 
-// ─── Timeline Node — SMALLER (36px) ──────────────────────────────────────────
+// ─── Timeline Node ────────────────────────────────────────────────────────────
 
 function TimelineNode({ activity, status }: { activity: RichActivity; status: ActivityStatus }) {
   const catKey = activity.category ?? 'custom';
@@ -483,25 +481,21 @@ function ActivityCard({
   const isMultiDay = !!activity.dateEnd && activity.dateEnd !== dayDate;
   const isPinned   = !!activity.isPinned;
 
-  // Conflict detection
   const conflictWith = getConflictingActivity(activity, allActivities);
   const hasOverlap   = conflictWith !== null;
 
-  // Swipe state
   const x            = useMotionValue(0);
   const controls     = useAnimation();
   const swipeBg      = useTransform(x, [0, SWIPE_THRESHOLD], ['rgba(124,92,255,0)', 'rgba(52,211,153,0.18)']);
   const checkOpacity = useTransform(x, [0, SWIPE_THRESHOLD * 0.5, SWIPE_THRESHOLD], [0, 0.4, 1]);
   const swipeLocked  = useRef(false);
 
-  // Shake animation on mount if conflict detected
   const shakeControls = useAnimation();
   const hasShaken     = useRef(false);
 
   useEffect(() => {
     if (hasOverlap && !hasShaken.current) {
       hasShaken.current = true;
-      // Small delay so the card finishes entering before shaking
       const timer = setTimeout(() => {
         shakeControls.start({
           x: [0, -8, 8, -6, 6, -3, 3, 0],
@@ -512,12 +506,10 @@ function ActivityCard({
     }
   }, [hasOverlap, shakeControls]);
 
-  // Reset shake flag when conflict goes away so it can shake again if conflict reappears
   useEffect(() => {
     if (!hasOverlap) hasShaken.current = false;
   }, [hasOverlap]);
 
-  // Long-press state
   const longPressTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const isDragging = useRef(false);
@@ -558,9 +550,8 @@ function ActivityCard({
     <motion.div
       className="relative"
       animate={shakeControls}
-      initial={{ opacity: 0, x: -16, scale: 0.97 }}
-      exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-      transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+      // FIX: removed `initial` with x/scale from the wrapper — let the inner card handle it
+      // so AnimatePresence doesn't conflict with the shake animation controller
       layout
     >
       {/* Timeline node */}
@@ -611,7 +602,6 @@ function ActivityCard({
         }`}
         whileHover={{ y: isDayInPast ? 0 : -2, boxShadow: hasOverlap ? '0 8px 28px rgba(239,68,68,0.20)' : '0 8px 28px rgba(124,92,255,0.13)' }}
       >
-        {/* Conflict warning banner */}
         {hasOverlap && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
@@ -626,7 +616,6 @@ function ActivityCard({
           </motion.div>
         )}
 
-        {/* Pinned pill */}
         {isPinned && (
           <div className="flex items-center gap-1 mb-2">
             <span className="text-[10px] font-black text-violet-500 bg-violet-50 px-2 py-0.5 rounded-full border border-violet-100">
@@ -675,7 +664,6 @@ function ActivityCard({
         </div>
       </motion.div>
 
-      {/* Long-press context menu */}
       <AnimatePresence>
         {menuPos && (
           <ContextMenu
@@ -1100,6 +1088,15 @@ export default function Itinerary() {
   const [form,          setForm]          = useState<FormState>(BLANK_FORM);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
+  // ── FIX: track a render key per day so we can force-remount the
+  //    AnimatePresence children when switching tabs, bypassing any
+  //    stale internal Framer Motion exit/enter state. ────────────────────────
+  const [dayRenderKey, setDayRenderKey] = useState(0);
+
+  const isSavingRef = useRef(false);
+
+  const hasAutoSelected = useRef(false);
+
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 60_000);
@@ -1108,26 +1105,24 @@ export default function Itinerary() {
 
   useEffect(() => {
     if (!trip) { setDbLoading(false); return; }
+    hasAutoSelected.current = false;
 
     const cancel = loadItinerary(trip.id, {
-      // ── Fires instantly with whatever is in cache (memory or localStorage) ──
       onCached: (cached) => {
         if (cached?.length) {
           setDays(injectPinnedActivities(cached, trip.destination));
-          setDbLoading(false); // show cached UI immediately — no spinner needed
+          setDbLoading(false);
         }
-        // If no cache, keep spinner until onFresh arrives
       },
-      // ── Fires when fresh network data arrives and it differs from cached ──
       onFresh: (fresh) => {
+        // ── FIX: don't overwrite local state while a save is in flight ──
+        if (isSavingRef.current) return;
         const base = fresh.length ? fresh : buildEmptyDays(trip.startDate, trip.endDate);
         setDays(injectPinnedActivities(base, trip.destination));
         setDbLoading(false);
       },
-      // ── Network failed — if we had cached data it's already shown; otherwise show empty ──
       onError: () => {
         setDbLoading(prev => {
-          // Only flip to false if we're still waiting (no cache was served)
           if (prev) {
             setDays(injectPinnedActivities(
               buildEmptyDays(trip.startDate, trip.endDate),
@@ -1139,8 +1134,26 @@ export default function Itinerary() {
       },
     });
 
-    return cancel; // cancels in-flight fetch on unmount / trip change
+    return cancel;
   }, [trip]);
+
+  useEffect(() => {
+    if (!days.length || hasAutoSelected.current) return;
+    const today = todayDate();
+    const idx = days.findIndex(d => d.date === today);
+    if (idx >= 0) setActiveDay(idx);
+    hasAutoSelected.current = true;
+  }, [days]);
+
+  // ── FIX: bump the render key whenever activeDay changes so the
+  //    card list fully remounts, clearing any stale AnimatePresence state ──
+  const prevActiveDayRef = useRef(activeDay);
+  useEffect(() => {
+    if (prevActiveDayRef.current !== activeDay) {
+      prevActiveDayRef.current = activeDay;
+      setDayRenderKey(k => k + 1);
+    }
+  }, [activeDay]);
 
   const totalActivities = useMemo(
     () => days.reduce((s, d) => s + d.activities.length, 0), [days]
@@ -1180,9 +1193,11 @@ export default function Itinerary() {
     const withPinned = trip ? injectPinnedActivities(next, trip.destination) : next;
     setDays(withPinned);
     if (!trip) return;
+    isSavingRef.current = true;
     setSaving(true);
     setSaveError(null);
     const result = await saveItinerary(trip.id, stripPinned(next));
+    isSavingRef.current = false;
     setSaving(false);
     if (!result.success) {
       setSaveError(result.error ?? 'Failed to save. Please try again.');
@@ -1316,7 +1331,6 @@ export default function Itinerary() {
       className="min-h-screen pb-28 w-full overflow-x-hidden"
       style={{ background: 'linear-gradient(160deg, #f8fafc 0%, rgba(237,233,254,0.35) 50%, rgba(253,242,248,0.25) 100%)' }}
     >
-      {/* Save status indicators */}
       <AnimatePresence>
         {saving && (
           <motion.div
@@ -1343,14 +1357,12 @@ export default function Itinerary() {
         )}
       </AnimatePresence>
 
-      {/* Decorative background blobs */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
         <div className="absolute -top-16 -right-16 w-56 h-56 rounded-full opacity-[0.13]" style={{ background: '#7C5CFF' }} />
         <div className="absolute top-80 -left-12 w-40 h-40 rounded-full opacity-[0.10]" style={{ background: '#FFB7E1' }} />
         <div className="absolute bottom-40 -right-10 w-32 h-32 rounded-full opacity-[0.08]" style={{ background: '#C7E9FF' }} />
       </div>
 
-      {/* ── Header — transparent / clean ── */}
       <div className="px-4 sm:px-5 pt-12 pb-4 relative">
         <div className="relative flex items-start justify-between">
           <div>
@@ -1443,25 +1455,27 @@ export default function Itinerary() {
       </div>
 
       {/* ── Timeline ── */}
-      {!day || day.activities.length === 0 ? (
-        <EmptyItinerary isPast={isDayInPast} onAdd={openAddModal} />
-      ) : (
-        <div className="px-4 sm:px-6">
-          <div className="relative">
-            <div
-              className="absolute inset-y-0 pointer-events-none"
-              style={{
-                left: 17,
-                width: 2,
-                borderRadius: 9999,
-                background: 'linear-gradient(180deg, rgba(124,92,255,0.30) 0%, rgba(139,92,246,0.06) 100%)',
-              }}
-            />
-            <div className="space-y-3">
-              <AnimatePresence initial={false}>
+      {/* FIX: key={dayRenderKey} forces a full remount of this section on tab switch,
+           clearing stale AnimatePresence enter/exit state that caused cards to be invisible */}
+      <div key={dayRenderKey}>
+        {!day || day.activities.length === 0 ? (
+          <EmptyItinerary isPast={isDayInPast} onAdd={openAddModal} />
+        ) : (
+          <div className="px-4 sm:px-6">
+            <div className="relative">
+              <div
+                className="absolute inset-y-0 pointer-events-none"
+                style={{
+                  left: 17,
+                  width: 2,
+                  borderRadius: 9999,
+                  background: 'linear-gradient(180deg, rgba(124,92,255,0.30) 0%, rgba(139,92,246,0.06) 100%)',
+                }}
+              />
+              <div className="space-y-3">
                 {(day.activities as RichActivity[]).map(activity => (
                   <ActivityCard
-                    key={activity.id}
+                    key={`${day.date}-${activity.id}`}
                     activity={activity}
                     dayDate={day.date}
                     isDayInPast={isDayInPast}
@@ -1471,11 +1485,11 @@ export default function Itinerary() {
                     allActivities={day.activities as RichActivity[]}
                   />
                 ))}
-              </AnimatePresence>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* ── Day notes ── */}
       <DayNotes
