@@ -11,51 +11,96 @@ import {
 
 // ─── Weather hook ─────────────────────────────────────────────────────────────
 
-type WeatherData = { temp: number; desc: string; icon: string; feels: number } | null;
+type WeatherData = { temp: number; desc: string; icon: string; feels: number; isForecast: boolean } | null;
 
-function useWeather(destination: string): WeatherData {
+const WMO_ICONS: Record<number, string> = {
+  0:'☀️',1:'🌤️',2:'⛅',3:'☁️',45:'🌫️',48:'🌫️',
+  51:'🌦️',53:'🌦️',55:'🌧️',61:'🌧️',63:'🌧️',65:'🌧️',
+  71:'🌨️',73:'🌨️',75:'❄️',80:'🌦️',81:'🌧️',82:'⛈️',
+  95:'⛈️',96:'⛈️',99:'⛈️',
+};
+
+const WMO_DESC: Record<number, string> = {
+  0:'Clear sky',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',
+  45:'Foggy',48:'Icy fog',51:'Light drizzle',53:'Drizzle',55:'Heavy drizzle',
+  61:'Light rain',63:'Rain',65:'Heavy rain',71:'Light snow',73:'Snow',
+  75:'Heavy snow',80:'Showers',81:'Heavy showers',82:'Violent showers',
+  95:'Thunderstorm',96:'Thunderstorm',99:'Thunderstorm',
+};
+
+// Open-Meteo forecast covers ~16 days ahead. Past dates need the archive API.
+const FORECAST_HORIZON_DAYS = 16;
+
+function useWeather(destination: string, targetDate: string): WeatherData {
   const [weather, setWeather] = useState<WeatherData>(null);
+
   useEffect(() => {
-    if (!destination) return;
+    if (!destination || !targetDate) return;
     let cancelled = false;
+    setWeather(null); // clear stale weather while we fetch the new day's data
+
     const city = destination.split(',')[0].trim();
+
+    const today = todayDate();
+    const daysFromToday = Math.round(
+      (new Date(targetDate).getTime() - new Date(today).getTime()) / 86400000
+    );
+    const isPast = daysFromToday < 0;
+    const beyondForecast = daysFromToday > FORECAST_HORIZON_DAYS;
+
     fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`)
       .then(r => r.json())
       .then(geo => {
-        if (cancelled || !geo.results?.length) return;
+        if (cancelled || !geo.results?.length) return null;
         const { latitude, longitude } = geo.results[0];
+
+        if (beyondForecast) {
+          // No real data exists this far out — don't fabricate it.
+          return null;
+        }
+
+        if (isPast) {
+          // Historical weather for a specific past date.
+          return fetch(
+            `https://archive-api.open-meteo.com/v1/archive?latitude=${latitude}&longitude=${longitude}` +
+            `&start_date=${targetDate}&end_date=${targetDate}` +
+            `&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,weathercode` +
+            `&timezone=auto`
+          );
+        }
+
+        // Today or a future date within the forecast horizon.
         return fetch(
           `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
-          `&current=temperature_2m,apparent_temperature,weathercode&temperature_unit=celsius&timezone=auto`
+          `&start_date=${targetDate}&end_date=${targetDate}` +
+          `&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,weathercode` +
+          `&timezone=auto`
         );
       })
-      .then(r => r?.json())
+      .then(r => r ? r.json() : null)
       .then(data => {
-        if (cancelled || !data?.current) return;
-        const code: number = data.current.weathercode;
-        const WMO_ICONS: Record<number, string> = {
-          0:'☀️',1:'🌤️',2:'⛅',3:'☁️',45:'🌫️',48:'🌫️',
-          51:'🌦️',53:'🌦️',55:'🌧️',61:'🌧️',63:'🌧️',65:'🌧️',
-          71:'🌨️',73:'🌨️',75:'❄️',80:'🌦️',81:'🌧️',82:'⛈️',
-          95:'⛈️',96:'⛈️',99:'⛈️',
-        };
-        const WMO_DESC: Record<number, string> = {
-          0:'Clear sky',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',
-          45:'Foggy',48:'Icy fog',51:'Light drizzle',53:'Drizzle',55:'Heavy drizzle',
-          61:'Light rain',63:'Rain',65:'Heavy rain',71:'Light snow',73:'Snow',
-          75:'Heavy snow',80:'Showers',81:'Heavy showers',82:'Violent showers',
-          95:'Thunderstorm',96:'Thunderstorm',99:'Thunderstorm',
-        };
+        if (cancelled || !data?.daily) return;
+        const d = data.daily;
+        if (!d.time?.length) return;
+
+        const code: number = d.weathercode[0];
+        const max: number = d.temperature_2m_max[0];
+        const min: number = d.temperature_2m_min[0];
+        const feels: number = d.apparent_temperature_max?.[0] ?? max;
+
         setWeather({
-          temp:  Math.round(data.current.temperature_2m),
-          feels: Math.round(data.current.apparent_temperature),
+          temp:  Math.round((max + min) / 2),
+          feels: Math.round(feels),
           icon:  WMO_ICONS[code] ?? '🌡️',
           desc:  WMO_DESC[code]  ?? 'Unknown',
+          isForecast: !isPast,
         });
       })
       .catch(() => {});
+
     return () => { cancelled = true; };
-  }, [destination]);
+  }, [destination, targetDate]);
+
   return weather;
 }
 
@@ -298,9 +343,13 @@ const BLANK_FORM: FormState = {
 
 // ─── Day Progress + Weather ───────────────────────────────────────────────────
 
-function DayProgress({ total, completed, destination }: { total: number; completed: number; destination: string }) {
+function DayProgress({ total, completed, destination, date }: { total: number; completed: number; destination: string; date: string }) {
   const pct     = total === 0 ? 0 : Math.round((completed / total) * 100);
-  const weather = useWeather(destination);
+  const weather = useWeather(destination, date);
+
+  const today = todayDate();
+  const daysOut = Math.round((new Date(date).getTime() - new Date(today).getTime()) / 86400000);
+  const tooFarOut = daysOut > 16;
 
   return (
     <motion.div
@@ -321,14 +370,20 @@ function DayProgress({ total, completed, destination }: { total: number; complet
             </p>
           </div>
           <div className="flex flex-col items-end gap-0.5">
-            {weather ? (
+            {tooFarOut ? (
+              <p className="text-white/50 text-[10px] text-right max-w-[110px] leading-tight">
+                Forecast not yet available
+              </p>
+            ) : weather ? (
               <>
                 <div className="flex items-center gap-1.5">
                   <span className="text-2xl leading-none">{weather.icon}</span>
                   <span className="text-white text-2xl font-black leading-none">{weather.temp}°</span>
                 </div>
                 <p className="text-white/70 text-[10px] font-semibold text-right leading-tight">{weather.desc}</p>
-                <p className="text-white/50 text-[9px] text-right">Feels {weather.feels}°C</p>
+                <p className="text-white/50 text-[9px] text-right">
+                  {weather.isForecast ? 'Feels' : 'Felt'} {weather.feels}°C
+                </p>
               </>
             ) : (
               <div className="flex items-center gap-1.5">
@@ -550,8 +605,6 @@ function ActivityCard({
     <motion.div
       className="relative"
       animate={shakeControls}
-      // FIX: removed `initial` with x/scale from the wrapper — let the inner card handle it
-      // so AnimatePresence doesn't conflict with the shake animation controller
       layout
     >
       {/* Timeline node */}
@@ -1425,6 +1478,7 @@ export default function Itinerary() {
           total={day.activities.length}
           completed={completedCount}
           destination={trip.destination}
+          date={day.date}
         />
       )}
 
