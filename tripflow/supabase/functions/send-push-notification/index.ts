@@ -8,9 +8,9 @@ declare const Deno: {
 // special "npm:" specifier — silence type-checking for the runtime import.
 // @ts-ignore
 import webpush from "npm:web-push@3.6.7";
-
+//just for deployement of vercel
 webpush.setVapidDetails(
-  "mailto:you@tripflow.app", // change to a real email
+  "mhjrpy@gmail.com", // change to a real email
   Deno.env.get("VAPID_PUBLIC_KEY")!,
   Deno.env.get("VAPID_PRIVATE_KEY")!
 );
