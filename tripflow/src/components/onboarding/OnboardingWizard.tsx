@@ -1,25 +1,22 @@
 // src/components/onboarding/OnboardingWizard.tsx
-// PHP added to currencies; date inputs block past dates; name step added.
+// Enhanced: two-part destination (country → local place), searchable with flag autocomplete,
+// real country validation, plus all prior fixes (PHP currency, past-date block, name step).
 
-import { useState } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, User, MapPin, Calendar, Wallet, Users, CheckCircle } from 'lucide-react';
+import { X, User, MapPin, Calendar, Wallet, Users, CheckCircle, Search, ChevronRight } from 'lucide-react';
 import { useTrip } from '../../context/TripContext';
 import type { OnboardingForm, Trip, TravelType, Currency } from '../../types';
 import { tripDays, fmtDate } from '../../utils';
 
+// ─── Types ───────────────────────────────────────────────────────────────────
+interface CountryEntry { name: string; flag: string; code: string; }
+
+// ─── Constants ───────────────────────────────────────────────────────────────
 const STEPS = ['Your Name', 'Destination', 'Dates', 'Budget', 'Travel Type', 'Review'];
 
-const DESTINATIONS = [
-  { emoji: '🇯🇵', label: 'Japan' },
-  { emoji: '🇸🇬', label: 'Singapore' },
-  { emoji: '🇭🇰', label: 'Hong Kong' },
-  { emoji: '🇮🇹', label: 'Italy' },
-  { emoji: '🇹🇭', label: 'Thailand' },
-  { emoji: '🇫🇷', label: 'France' },
-  { emoji: '🇵🇭', label: 'Philippines' },
-];
 const CURRENCIES: Currency[] = ['PHP', 'USD', 'EUR', 'GBP', 'JPY', 'SGD', 'AUD', 'CAD', 'HKD'];
+
 const TRAVEL_TYPES: { value: TravelType; icon: string; label: string }[] = [
   { value: 'solo',    icon: '🧳', label: 'Solo' },
   { value: 'couple',  icon: '💑', label: 'Couple' },
@@ -27,54 +24,416 @@ const TRAVEL_TYPES: { value: TravelType; icon: string; label: string }[] = [
   { value: 'friends', icon: '👯', label: 'Friends' },
 ];
 
-const EMPTY_FORM: OnboardingForm = {
-  name: '', dest: '', startDate: '', endDate: '', budget: '', currency: 'PHP', travelType: '',
+// Full country list with flag emoji and ISO code
+const ALL_COUNTRIES: CountryEntry[] = [
+  { name: 'Afghanistan',            flag: '🇦🇫', code: 'AF' },
+  { name: 'Albania',                flag: '🇦🇱', code: 'AL' },
+  { name: 'Algeria',                flag: '🇩🇿', code: 'DZ' },
+  { name: 'Argentina',              flag: '🇦🇷', code: 'AR' },
+  { name: 'Australia',              flag: '🇦🇺', code: 'AU' },
+  { name: 'Austria',                flag: '🇦🇹', code: 'AT' },
+  { name: 'Bangladesh',             flag: '🇧🇩', code: 'BD' },
+  { name: 'Belgium',                flag: '🇧🇪', code: 'BE' },
+  { name: 'Brazil',                 flag: '🇧🇷', code: 'BR' },
+  { name: 'Cambodia',               flag: '🇰🇭', code: 'KH' },
+  { name: 'Canada',                 flag: '🇨🇦', code: 'CA' },
+  { name: 'Chile',                  flag: '🇨🇱', code: 'CL' },
+  { name: 'China',                  flag: '🇨🇳', code: 'CN' },
+  { name: 'Colombia',               flag: '🇨🇴', code: 'CO' },
+  { name: 'Croatia',                flag: '🇭🇷', code: 'HR' },
+  { name: 'Czech Republic',         flag: '🇨🇿', code: 'CZ' },
+  { name: 'Denmark',                flag: '🇩🇰', code: 'DK' },
+  { name: 'Egypt',                  flag: '🇪🇬', code: 'EG' },
+  { name: 'Finland',                flag: '🇫🇮', code: 'FI' },
+  { name: 'France',                 flag: '🇫🇷', code: 'FR' },
+  { name: 'Germany',                flag: '🇩🇪', code: 'DE' },
+  { name: 'Greece',                 flag: '🇬🇷', code: 'GR' },
+  { name: 'Hong Kong',              flag: '🇭🇰', code: 'HK' },
+  { name: 'Hungary',                flag: '🇭🇺', code: 'HU' },
+  { name: 'India',                  flag: '🇮🇳', code: 'IN' },
+  { name: 'Indonesia',              flag: '🇮🇩', code: 'ID' },
+  { name: 'Ireland',                flag: '🇮🇪', code: 'IE' },
+  { name: 'Israel',                 flag: '🇮🇱', code: 'IL' },
+  { name: 'Italy',                  flag: '🇮🇹', code: 'IT' },
+  { name: 'Japan',                  flag: '🇯🇵', code: 'JP' },
+  { name: 'Jordan',                 flag: '🇯🇴', code: 'JO' },
+  { name: 'Kenya',                  flag: '🇰🇪', code: 'KE' },
+  { name: 'Laos',                   flag: '🇱🇦', code: 'LA' },
+  { name: 'Malaysia',               flag: '🇲🇾', code: 'MY' },
+  { name: 'Maldives',               flag: '🇲🇻', code: 'MV' },
+  { name: 'Mexico',                 flag: '🇲🇽', code: 'MX' },
+  { name: 'Morocco',                flag: '🇲🇦', code: 'MA' },
+  { name: 'Myanmar',                flag: '🇲🇲', code: 'MM' },
+  { name: 'Nepal',                  flag: '🇳🇵', code: 'NP' },
+  { name: 'Netherlands',            flag: '🇳🇱', code: 'NL' },
+  { name: 'New Zealand',            flag: '🇳🇿', code: 'NZ' },
+  { name: 'Norway',                 flag: '🇳🇴', code: 'NO' },
+  { name: 'Pakistan',               flag: '🇵🇰', code: 'PK' },
+  { name: 'Peru',                   flag: '🇵🇪', code: 'PE' },
+  { name: 'Philippines',            flag: '🇵🇭', code: 'PH' },
+  { name: 'Poland',                 flag: '🇵🇱', code: 'PL' },
+  { name: 'Portugal',               flag: '🇵🇹', code: 'PT' },
+  { name: 'Qatar',                  flag: '🇶🇦', code: 'QA' },
+  { name: 'Romania',                flag: '🇷🇴', code: 'RO' },
+  { name: 'Russia',                 flag: '🇷🇺', code: 'RU' },
+  { name: 'Saudi Arabia',           flag: '🇸🇦', code: 'SA' },
+  { name: 'Singapore',              flag: '🇸🇬', code: 'SG' },
+  { name: 'South Africa',          flag: '🇿🇦', code: 'ZA' },
+  { name: 'South Korea',           flag: '🇰🇷', code: 'KR' },
+  { name: 'Spain',                  flag: '🇪🇸', code: 'ES' },
+  { name: 'Sri Lanka',             flag: '🇱🇰', code: 'LK' },
+  { name: 'Sweden',                 flag: '🇸🇪', code: 'SE' },
+  { name: 'Switzerland',            flag: '🇨🇭', code: 'CH' },
+  { name: 'Taiwan',                 flag: '🇹🇼', code: 'TW' },
+  { name: 'Thailand',               flag: '🇹🇭', code: 'TH' },
+  { name: 'Turkey',                 flag: '🇹🇷', code: 'TR' },
+  { name: 'Ukraine',                flag: '🇺🇦', code: 'UA' },
+  { name: 'United Arab Emirates',  flag: '🇦🇪', code: 'AE' },
+  { name: 'United Kingdom',        flag: '🇬🇧', code: 'GB' },
+  { name: 'United States',         flag: '🇺🇸', code: 'US' },
+  { name: 'Vietnam',               flag: '🇻🇳', code: 'VN' },
+];
+
+// Local places per country (ISO code → places list)
+const PLACES_BY_COUNTRY: Record<string, string[]> = {
+  PH: ['Manila', 'Cebu City', 'Davao City', 'Boracay', 'Palawan', 'Siargao', 'Baguio', 'Iloilo City', 'Batangas', 'Vigan', 'Dumaguete', 'Coron', 'El Nido', 'Bohol', 'Tagaytay'],
+  JP: ['Tokyo', 'Osaka', 'Kyoto', 'Hiroshima', 'Sapporo', 'Nara', 'Fukuoka', 'Yokohama', 'Hakone', 'Okinawa', 'Nikko', 'Nagoya', 'Kobe'],
+  SG: ['Marina Bay', 'Sentosa', 'Orchard Road', 'Chinatown', 'Little India', 'Clarke Quay', 'Gardens by the Bay'],
+  HK: ['Kowloon', 'Central', 'Mong Kok', 'Lantau Island', 'Victoria Peak', 'Tsim Sha Tsui', 'Wan Chai'],
+  TH: ['Bangkok', 'Chiang Mai', 'Phuket', 'Koh Samui', 'Pattaya', 'Krabi', 'Ayutthaya', 'Koh Phi Phi', 'Pai', 'Chiang Rai'],
+  FR: ['Paris', 'Nice', 'Lyon', 'Marseille', 'Bordeaux', 'Strasbourg', 'Mont Saint-Michel', 'Versailles', 'Cannes', 'Avignon'],
+  IT: ['Rome', 'Venice', 'Florence', 'Milan', 'Naples', 'Amalfi Coast', 'Tuscany', 'Sicily', 'Cinque Terre', 'Bologna'],
+  AU: ['Sydney', 'Melbourne', 'Brisbane', 'Cairns', 'Gold Coast', 'Perth', 'Adelaide', 'Uluru', 'Great Barrier Reef', 'Byron Bay'],
+  US: ['New York City', 'Los Angeles', 'Chicago', 'Miami', 'Las Vegas', 'San Francisco', 'Honolulu', 'New Orleans', 'Seattle', 'Washington DC'],
+  GB: ['London', 'Edinburgh', 'Manchester', 'Liverpool', 'Oxford', 'Cambridge', 'Bath', 'York', 'Cardiff', 'Glasgow'],
+  ID: ['Bali', 'Jakarta', 'Lombok', 'Yogyakarta', 'Komodo Island', 'Raja Ampat', 'Gili Islands', 'Bandung', 'Ubud', 'Flores'],
+  MY: ['Kuala Lumpur', 'Penang', 'Langkawi', 'Kota Kinabalu', 'Malacca', 'Cameron Highlands', 'Johor Bahru', 'Kuching'],
+  KR: ['Seoul', 'Busan', 'Jeju Island', 'Gyeongju', 'Incheon', 'Suwon', 'Jeonju', 'Sokcho'],
+  VN: ['Hanoi', 'Ho Chi Minh City', 'Da Nang', 'Hoi An', 'Ha Long Bay', 'Hue', 'Nha Trang', 'Phu Quoc', 'Sapa'],
+  IN: ['Mumbai', 'Delhi', 'Goa', 'Jaipur', 'Agra', 'Varanasi', 'Kerala', 'Bangalore', 'Udaipur', 'Leh-Ladakh'],
+  CN: ['Beijing', 'Shanghai', 'Xi\'an', 'Chengdu', 'Guilin', 'Zhangjiajie', 'Hangzhou', 'Shenzhen', 'Hong Kong', 'Lhasa'],
+  DE: ['Berlin', 'Munich', 'Hamburg', 'Frankfurt', 'Cologne', 'Dresden', 'Heidelberg', 'Rothenburg', 'Neuschwanstein', 'Stuttgart'],
+  ES: ['Barcelona', 'Madrid', 'Seville', 'Granada', 'Valencia', 'Bilbao', 'Toledo', 'San Sebastián', 'Ibiza', 'Mallorca'],
+  GR: ['Athens', 'Santorini', 'Mykonos', 'Crete', 'Rhodes', 'Corfu', 'Meteora', 'Thessaloniki', 'Zakynthos'],
+  TR: ['Istanbul', 'Cappadocia', 'Antalya', 'Ephesus', 'Bodrum', 'Pamukkale', 'Trabzon', 'Izmir'],
+  AE: ['Dubai', 'Abu Dhabi', 'Sharjah', 'Ajman', 'Ras Al Khaimah', 'Fujairah'],
+  MX: ['Mexico City', 'Cancún', 'Tulum', 'Oaxaca', 'Guadalajara', 'Playa del Carmen', 'Chichen Itza', 'Puerto Vallarta'],
+  NZ: ['Auckland', 'Queenstown', 'Christchurch', 'Wellington', 'Rotorua', 'Milford Sound', 'Bay of Islands'],
+  MA: ['Marrakech', 'Casablanca', 'Fes', 'Chefchaouen', 'Essaouira', 'Rabat', 'Agadir', 'Merzouga'],
+  PT: ['Lisbon', 'Porto', 'Algarve', 'Sintra', 'Madeira', 'Azores', 'Évora', 'Braga'],
+  MV: ['Malé', 'Maafushi', 'Baa Atoll', 'Hulhumale', 'Addu Atoll'],
+  LK: ['Colombo', 'Kandy', 'Galle', 'Sigiriya', 'Ella', 'Negombo', 'Trincomalee'],
+  NP: ['Kathmandu', 'Pokhara', 'Chitwan', 'Lumbini', 'Everest Base Camp', 'Annapurna'],
+  KH: ['Siem Reap', 'Phnom Penh', 'Sihanoukville', 'Battambang', 'Koh Rong'],
+  TW: ['Taipei', 'Tainan', 'Kaohsiung', 'Hualien', 'Sun Moon Lake', 'Taroko Gorge', 'Jiufen'],
 };
 
-// Today's date in YYYY-MM-DD format (used as min for date pickers)
-const TODAY = new Date().toISOString().slice(0, 10);
+// Popular / featured countries shown as quick-picks
+const FEATURED_COUNTRIES = ['PH', 'JP', 'SG', 'TH'];
 
+const EMPTY_FORM: OnboardingForm & { countryCode: string; city: string } = {
+  name: '', dest: '', startDate: '', endDate: '', budget: '', currency: 'PHP', travelType: '',
+  countryCode: '', city: '',
+};
+
+const TODAY = new Date().toISOString().slice(0, 4);
+
+// ─── Searchable Country Picker ────────────────────────────────────────────────
+interface CountryPickerProps {
+  value: string;          // country name
+  countryCode: string;
+  onChange: (name: string, code: string) => void;
+  error?: string;
+}
+
+function CountryPicker({ value, countryCode, onChange, error }: CountryPickerProps) {
+  const [query, setQuery]       = useState(value);
+  const [open, setOpen]         = useState(false);
+  const [focused, setFocused]   = useState(false);
+  const containerRef            = useRef<HTMLDivElement>(null);
+
+  // Sync query when value changes externally (e.g. chip selection)
+  useEffect(() => { setQuery(value); }, [value]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setFocused(false);
+        // If user typed something that doesn't match a country, reset
+        if (value && query !== value) setQuery(value);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [value, query]);
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return [];
+    return ALL_COUNTRIES
+      .filter(c => c.name.toLowerCase().startsWith(query.toLowerCase().trim()))
+      .slice(0, 8);
+  }, [query]);
+
+  const featuredList = useMemo(
+    () => FEATURED_COUNTRIES.map(code => ALL_COUNTRIES.find(c => c.code === code)!).filter(Boolean),
+    []
+  );
+
+  const handleSelect = (country: CountryEntry) => {
+    setQuery(country.name);
+    setOpen(false);
+    onChange(country.name, country.code);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setQuery(val);
+    setOpen(true);
+    // Clear selection if user is typing something new
+    if (value && val !== value) onChange('', '');
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      {/* Input */}
+      <div className={`relative flex items-center w-full rounded-xl border text-sm bg-slate-50 transition-all
+        ${error ? 'border-red-400' : focused ? 'border-indigo-400 ring-2 ring-indigo-500/20 bg-white' : 'border-slate-200'}
+        ${countryCode ? 'bg-white' : ''}`}>
+        <Search size={16} className="absolute left-4 text-slate-400 pointer-events-none" />
+        <input
+          type="text"
+          value={query}
+          placeholder="Search country… e.g. Phil"
+          autoComplete="off"
+          onFocus={() => { setFocused(true); setOpen(true); }}
+          onChange={handleInputChange}
+          className="w-full pl-10 pr-4 py-3.5 rounded-xl bg-transparent focus:outline-none text-sm"
+        />
+        {countryCode && (
+          <span className="absolute right-4 text-lg">
+            {ALL_COUNTRIES.find(c => c.code === countryCode)?.flag}
+          </span>
+        )}
+      </div>
+
+      {/* Dropdown */}
+      {open && (
+        <div className="absolute z-50 top-full mt-1 w-full bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
+          {filtered.length > 0 ? (
+            <>
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-4 pt-3 pb-1">Countries</p>
+              {filtered.map(c => (
+                <button key={c.code} onMouseDown={() => handleSelect(c)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-indigo-50 transition-colors text-left">
+                  <span className="text-xl">{c.flag}</span>
+                  <span className="text-sm font-medium text-slate-800">{c.name}</span>
+                </button>
+              ))}
+            </>
+          ) : query.length > 0 ? (
+            <div className="px-4 py-4 text-center">
+              <p className="text-sm font-semibold text-slate-700">"{query}" is not a valid country</p>
+              <p className="text-xs text-slate-400 mt-1">Try searching: Philippines, Japan, France…</p>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
+
+      {/* Featured chips (shown when no country selected yet) */}
+      {!countryCode && (
+        <div className="mt-3">
+          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Popular</p>
+          <div className="flex flex-wrap gap-2">
+            {featuredList.map(c => (
+              <button key={c.code} onMouseDown={() => handleSelect(c)}
+                className="px-3 py-1.5 rounded-full bg-slate-100 text-xs font-medium text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 transition-colors">
+                {c.flag} {c.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Local Place Picker ───────────────────────────────────────────────────────
+interface PlacePickerProps {
+  countryCode: string;
+  value: string;
+  onChange: (city: string) => void;
+  error?: string;
+}
+
+function PlacePicker({ countryCode, value, onChange, error }: PlacePickerProps) {
+  const [query, setQuery]     = useState(value);
+  const [open, setOpen]       = useState(false);
+  const [focused, setFocused] = useState(false);
+  const containerRef          = useRef<HTMLDivElement>(null);
+
+  const places = PLACES_BY_COUNTRY[countryCode] ?? [];
+
+  useEffect(() => { setQuery(value); }, [value]);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setFocused(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return places;
+    return places.filter(p => p.toLowerCase().includes(query.toLowerCase().trim()));
+  }, [query, places]);
+
+  const handleSelect = (city: string) => {
+    setQuery(city);
+    setOpen(false);
+    onChange(city);
+  };
+
+  if (!countryCode) return null;
+
+  return (
+    <div ref={containerRef} className="relative mt-4">
+      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+        Local Destination
+      </label>
+
+      {places.length === 0 ? (
+        // Free-text fallback for countries without a preset list
+        <input
+          type="text"
+          value={query}
+          onChange={e => { setQuery(e.target.value); onChange(e.target.value); }}
+          placeholder="Enter city or place…"
+          className={`w-full px-4 py-3.5 rounded-xl border text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${error ? 'border-red-400' : 'border-slate-200'}`}
+        />
+      ) : (
+        <div className={`relative flex items-center w-full rounded-xl border text-sm bg-slate-50 transition-all
+          ${error ? 'border-red-400' : focused ? 'border-indigo-400 ring-2 ring-indigo-500/20 bg-white' : 'border-slate-200'}
+          ${value ? 'bg-white' : ''}`}>
+          <Search size={16} className="absolute left-4 text-slate-400 pointer-events-none" />
+          <input
+            type="text"
+            value={query}
+            placeholder={`Search places in ${ALL_COUNTRIES.find(c => c.code === countryCode)?.name}…`}
+            autoComplete="off"
+            onFocus={() => { setFocused(true); setOpen(true); }}
+            onChange={e => { setQuery(e.target.value); setOpen(true); if (value) onChange(''); }}
+            className="w-full pl-10 pr-4 py-3.5 rounded-xl bg-transparent focus:outline-none text-sm"
+          />
+        </div>
+      )}
+
+      {/* Dropdown */}
+      {open && places.length > 0 && (
+        <div className="absolute z-50 top-full mt-1 w-full bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden max-h-52 overflow-y-auto">
+          {filtered.length > 0 ? (
+            <>
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-4 pt-3 pb-1">Places</p>
+              {filtered.map(p => (
+                <button key={p} onMouseDown={() => handleSelect(p)}
+                  className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-indigo-50 transition-colors text-left
+                    ${p === value ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-slate-800'}`}>
+                  <MapPin size={14} className="text-slate-400 shrink-0" />
+                  <span className="text-sm">{p}</span>
+                </button>
+              ))}
+            </>
+          ) : (
+            <div className="px-4 py-4 text-center">
+              <p className="text-sm text-slate-500">No places match "{query}"</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Quick chip grid */}
+      {!value && places.length > 0 && !open && (
+        <div className="flex flex-wrap gap-2 mt-3">
+          {places.slice(0, 8).map(p => (
+            <button key={p} onClick={() => handleSelect(p)}
+              className="px-3 py-1.5 rounded-full bg-slate-100 text-xs font-medium text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 transition-colors">
+              📍 {p}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
+    </div>
+  );
+}
+
+// ─── Main Wizard ──────────────────────────────────────────────────────────────
 interface Props { onClose: () => void; }
 
 export default function OnboardingWizard({ onClose }: Props) {
   const [step, setStep]     = useState(0);
-  const [form, setForm]     = useState<OnboardingForm>(EMPTY_FORM);
+  const [form, setForm]     = useState(EMPTY_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const { saveTrip }        = useTrip();
   const navigate            = useNavigate();
 
-  const set = (key: keyof OnboardingForm, val: string) => {
+  const set = (key: keyof typeof EMPTY_FORM, val: string) => {
     setForm(f => ({ ...f, [key]: val }));
     setErrors(e => ({ ...e, [key]: '' }));
   };
 
+  const setCountry = (name: string, code: string) => {
+    setForm(f => ({ ...f, dest: name ? `${name}` : '', countryCode: code, city: '' }));
+    setErrors(e => ({ ...e, dest: '', city: '' }));
+  };
+
+  const setCity = (city: string) => {
+    setForm(f => ({ ...f, city, dest: f.countryCode ? `${city ? city + ', ' : ''}${f.dest.split(',').pop()?.trim() || f.dest}` : f.dest }));
+    setErrors(e => ({ ...e, city: '' }));
+  };
+
+  // Build the final destination string for the trip record
+  const finalDestination = form.city ? `${form.city}, ${ALL_COUNTRIES.find(c => c.code === form.countryCode)?.name ?? form.dest}` : form.dest;
+
   const validate = (): boolean => {
     const e: Record<string, string> = {};
-    if (step === 0 && !form.name.trim()) e.name = 'Tell us what to call you';
-    if (step === 1 && !form.dest.trim()) e.dest = 'Enter a destination';
+    if (step === 0 && !form.name.trim())        e.name        = 'Tell us what to call you';
+    if (step === 1) {
+      if (!form.countryCode)                    e.dest        = 'Select a valid country from the list';
+      if (!form.city.trim())                    e.city        = 'Pick a local destination';
+    }
     if (step === 2) {
-      if (!form.startDate) e.startDate = 'Pick a start date';
-      if (!form.endDate)   e.endDate   = 'Pick an end date';
+      if (!form.startDate)                      e.startDate   = 'Pick a start date';
+      if (!form.endDate)                        e.endDate     = 'Pick an end date';
       if (form.startDate && form.startDate < TODAY) e.startDate = 'Start date cannot be in the past';
       if (form.startDate && form.endDate && form.endDate <= form.startDate)
-        e.endDate = 'End must be after start';
+                                                e.endDate     = 'End must be after start';
     }
-    if (step === 3 && (!form.budget || Number(form.budget) <= 0)) e.budget = 'Enter a valid budget';
-    if (step === 4 && !form.travelType) e.travelType = 'Choose a travel type';
+    if (step === 3 && (!form.budget || Number(form.budget) <= 0))
+                                                e.budget      = 'Enter a valid budget';
+    if (step === 4 && !form.travelType)         e.travelType  = 'Choose a travel type';
     setErrors(e);
     return Object.keys(e).length === 0;
   };
 
-  const next = () => { if (validate()) setStep(s => s + 1); };
-  const back = () => setStep(s => s - 1);
+  const next   = () => { if (validate()) setStep(s => s + 1); };
+  const back   = () => setStep(s => s - 1);
 
   const create = async () => {
     setSaving(true);
     const trip: Trip = {
-      id:          Date.now().toString(),
+      id: crypto.randomUUID(),
       displayName: form.name.trim(),
-      destination: form.dest.trim(),
+      destination: finalDestination,
       startDate:   form.startDate,
       endDate:     form.endDate,
       budget:      Number(form.budget),
@@ -90,6 +449,8 @@ export default function OnboardingWizard({ onClose }: Props) {
       console.error('Unable to save trip.');
     }
   };
+
+  const countryObj = ALL_COUNTRIES.find(c => c.code === form.countryCode);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-sm px-0">
@@ -144,31 +505,50 @@ export default function OnboardingWizard({ onClose }: Props) {
             </div>
           )}
 
-          {/* Step 1: Destination */}
+          {/* Step 1: Destination — Country then City */}
           {step === 1 && (
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <MapPin size={20} className="text-indigo-500" />
                 <h2 className="text-xl font-bold">Where are you headed?</h2>
               </div>
-              <p className="text-sm text-slate-500 mb-5">Pick your dream destination.</p>
-              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Destination</label>
-              <input
-                type="text"
-                value={form.dest}
-                onChange={e => set('dest', e.target.value)}
-                placeholder="e.g. Tokyo, Japan"
-                className={`w-full px-4 py-3.5 rounded-xl border text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${errors.dest ? 'border-red-400' : 'border-slate-200'}`}
+              <p className="text-sm text-slate-500 mb-5">First choose a country, then pick a local spot.</p>
+
+              {/* Country */}
+              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Country</label>
+              <CountryPicker
+                value={countryObj?.name ?? ''}
+                countryCode={form.countryCode}
+                onChange={setCountry}
+                error={errors.dest}
               />
-              {errors.dest && <p className="text-xs text-red-500 mt-1">{errors.dest}</p>}
-              <div className="flex flex-wrap gap-2 mt-4">
-                {DESTINATIONS.map(d => (
-                  <button key={d.label} onClick={() => set('dest', d.label)}
-                    className="px-3 py-1.5 rounded-full bg-slate-100 text-xs font-medium text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 transition-colors">
-                    {d.emoji} {d.label}
-                  </button>
-                ))}
-              </div>
+
+              {/* Local place — appears after country is selected */}
+              {form.countryCode && (
+                <>
+                  {/* Breadcrumb */}
+                  <div className="flex items-center gap-1.5 mt-5 mb-1 text-xs text-slate-500">
+                    <span className="font-semibold text-indigo-600">{countryObj?.flag} {countryObj?.name}</span>
+                    <ChevronRight size={12} className="text-slate-400" />
+                    <span>{form.city || 'Choose a place'}</span>
+                  </div>
+
+                  <PlacePicker
+                    countryCode={form.countryCode}
+                    value={form.city}
+                    onChange={setCity}
+                    error={errors.city}
+                  />
+                </>
+              )}
+
+              {/* Summary pill */}
+              {form.countryCode && form.city && (
+                <div className="mt-4 px-4 py-3 bg-indigo-50 rounded-xl flex items-center gap-2">
+                  <span className="text-xl">{countryObj?.flag}</span>
+                  <span className="text-sm font-semibold text-indigo-700">{form.city}, {countryObj?.name}</span>
+                </div>
+              )}
             </div>
           )}
 
@@ -181,32 +561,28 @@ export default function OnboardingWizard({ onClose }: Props) {
               </div>
               <p className="text-sm text-slate-500 mb-5">Set your departure and return dates.</p>
 
-              {/* Start date */}
               <div className="mb-4">
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                  Start Date
-                </label>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Start Date</label>
                 <input
                   type="date"
                   value={form.startDate}
                   min={TODAY}
                   onChange={e => {
-                    set('startDate', e.target.value);
-                    // Reset end date if it's now before start
-                    if (form.endDate && e.target.value >= form.endDate) {
-                      set('endDate', '');
-                    }
+                    const val = e.target.value;
+                    setForm(f => ({
+                      ...f,
+                      startDate: val,
+                      endDate: f.endDate && val >= f.endDate ? '' : f.endDate,
+                    }));
+                    setErrors(e => ({ ...e, startDate: '', endDate: '' }));
                   }}
                   className={`w-full px-4 py-3.5 rounded-xl border text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${errors.startDate ? 'border-red-400' : 'border-slate-200'}`}
                 />
                 {errors.startDate && <p className="text-xs text-red-500 mt-1">{errors.startDate}</p>}
               </div>
 
-              {/* End date */}
               <div className="mb-4">
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                  End Date
-                </label>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">End Date</label>
                 <input
                   type="date"
                   value={form.endDate}
@@ -291,7 +667,8 @@ export default function OnboardingWizard({ onClose }: Props) {
               <div className="bg-slate-50 rounded-2xl overflow-hidden border border-slate-100">
                 {[
                   { label: 'Name',          value: form.name },
-                  { label: 'Destination',   value: form.dest },
+                  { label: 'Country',       value: `${countryObj?.flag ?? ''} ${countryObj?.name ?? form.dest}`.trim() },
+                  { label: 'Destination',   value: form.city || '—' },
                   { label: 'Start',         value: fmtDate(form.startDate) },
                   { label: 'End',           value: fmtDate(form.endDate) },
                   { label: 'Duration',      value: `${tripDays(form.startDate, form.endDate)} days` },

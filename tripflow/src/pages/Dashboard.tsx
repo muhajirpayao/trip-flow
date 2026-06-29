@@ -523,17 +523,25 @@ export default function Dashboard() {
                   <Star size={12} />
                   <span className="text-[10px] font-bold uppercase tracking-wide">Primary trip</span>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <button
-                    onClick={openEditModal}
-                    className="text-violet-500 hover:text-violet-700 transition-colors p-1 rounded-lg hover:bg-violet-50"
-                  >
-                    <Pencil size={14} />
-                  </button>
-                  <span className="text-xs font-semibold text-violet-600 bg-violet-50 px-3 py-1 rounded-full">
-                    {trip.travelType}
-                  </span>
-                </div>
+<div className="flex items-center gap-2 flex-shrink-0">
+  <button
+    onClick={openEditModal}
+    className="text-violet-500 hover:text-violet-700 transition-colors p-1.5 rounded-lg hover:bg-violet-50"
+    title="Edit trip"
+  >
+    <Pencil size={14} />
+  </button>
+  <button
+    onClick={() => setConfirmRemove(true)}
+    className="text-rose-400 hover:text-rose-600 transition-colors p-1.5 rounded-lg hover:bg-rose-50"
+    title="Delete trip"
+  >
+    <Trash2 size={14} />
+  </button>
+  <span className="text-xs font-semibold text-violet-600 bg-violet-50 px-3 py-1 rounded-full">
+    {trip.travelType}
+  </span>
+</div>
               </div>
               <h3 className="text-lg sm:text-xl font-black text-slate-900 truncate">{trip.destination}</h3>
               <div className="flex flex-col gap-2 text-sm text-slate-500">

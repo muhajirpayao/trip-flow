@@ -53,46 +53,34 @@ export function TripProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const saveTrip = async (t: Trip) => {
-    if (!user) return false;
+  if (!user) return false;
 
-    const sanitize = (s: string) =>
-      s.replace(/[\uD800-\uDFFF]/g, (c) => {
-        const code = c.charCodeAt(0);
-        return (code >= 0xD800 && code <= 0xDBFF) ? '' : c;
-      });
-
-    const row = {
-      id: t.id,
-      user_id: user.id,
-      display_name: sanitize(t.displayName ?? ''),
-      destination: sanitize(t.destination),
-      start_date: t.startDate,
-      end_date: t.endDate,
-      budget: t.budget ?? null,
-      currency: t.currency ?? 'USD',
-      travel_type: t.travelType ?? null,
-      created_at: t.createdAt,
-    };
-
-    const res = await supabase
-      .from('trips')
-      .upsert(row, { onConflict: 'id', ignoreDuplicates: false });
-
-    if (res.error) {
-      console.error('saveTrip error', res.error);
-      return false;
-    }
-
-    const cleaned: Trip = {
-      ...t,
-      displayName: sanitize(t.displayName ?? ''),
-      destination: sanitize(t.destination),
-    };
-
-    setTrip(cleaned);
-    setAllTrips(prev => [cleaned, ...prev.filter(p => p.id !== t.id)]);
-    return true;
+  const row = {
+    id: t.id,
+    user_id: user.id,
+    display_name: t.displayName ?? '',
+    destination: t.destination,
+    start_date: t.startDate,
+    end_date: t.endDate,
+    budget: t.budget ?? null,
+    currency: t.currency ?? 'PHP',
+    travel_type: t.travelType ?? null,
+    created_at: t.createdAt,
   };
+
+  const { error } = await supabase
+    .from('trips')
+    .upsert(row, { onConflict: 'id', ignoreDuplicates: false });
+
+  if (error) {
+    console.error('saveTrip error', error);
+    return false;
+  }
+
+  setTrip(t);
+  setAllTrips(prev => [t, ...prev.filter(p => p.id !== t.id)]);
+  return true;
+};
 
   // Updates fields on the currently active trip and persists to Supabase.
   const updateTrip = async (fields: Partial<Omit<Trip, 'id' | 'createdAt'>>) => {

@@ -1585,6 +1585,6 @@ export default function Itinerary() {
           />
         )}
       </AnimatePresence>
-    </div>
+    </div>   
   );
 }

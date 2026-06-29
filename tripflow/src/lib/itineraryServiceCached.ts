@@ -130,19 +130,22 @@ export function loadItinerary(
 
   // ── 3. Fetch fresh data in the background ──
   _loadItinerary(tripId)
-    .then((fresh: ItineraryDay[] | null) => {
-      if (cancelled) return;
-      if (!fresh) return; // treat null as "nothing on server yet", keep cached
+  .then((fresh: ItineraryDay[] | null) => {
+    if (cancelled) return;
 
-      // Populate caches
-      memoryCache.set(tripId, fresh);
-      lsWrite(tripId, fresh);
+    const result = fresh ?? []; // treat null as empty array
 
-      // Only notify UI if data actually changed
-      if (!cached || !isEqual(cached, fresh)) {
-        options.onFresh?.(fresh);
-      }
-    })
+    memoryCache.set(tripId, result);
+    lsWrite(tripId, result);
+
+    // Always call onFresh so the component can set dbLoading=false
+    if (!cached || !isEqual(cached, result)) {
+      options.onFresh?.(result);
+    } else {
+      // Data unchanged but we still need to signal "loading done"
+      options.onFresh?.(result);
+    }
+  })
     .catch((err: unknown) => {
       if (!cancelled) options.onError?.(err);
     });
