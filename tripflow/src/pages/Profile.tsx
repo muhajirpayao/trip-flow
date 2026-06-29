@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTrip } from '../context/TripContext';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { usePushSubscription } from '../hooks/usePushSubscription';
 import {
   User, Bell, Palette, DollarSign, ChevronRight,
   LogOut, Trash2, Download, CheckCircle2, X,
@@ -30,8 +31,9 @@ interface AppVersion {
 }
 
 // ─── Mock data — only used for sections not wired up yet ──────────────────────
-// (App version / changelog / theme / currency / notifications are still
-// placeholders. Name, email, trip overview, and logout below are real.)
+// (App version / changelog / theme / currency / weekly recap are still
+// placeholders. Name, email, trip overview, logout, and push notifications
+// below are real.)
 
 const MOCK_VERSION: AppVersion = {
   current: '1.3.0',
@@ -112,13 +114,14 @@ function SettingRow({
   );
 }
 
-function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+function Toggle({ on, onToggle, disabled = false }: { on: boolean; onToggle: () => void; disabled?: boolean }) {
   return (
     <button
       onClick={onToggle}
+      disabled={disabled}
       aria-checked={on}
       role="switch"
-      className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none ${on ? 'bg-violet-500' : 'bg-slate-200'}`}
+      className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed ${on ? 'bg-violet-500' : 'bg-slate-200'}`}
     >
       <span
         className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${on ? 'translate-x-5' : 'translate-x-0'}`}
@@ -201,6 +204,33 @@ export default function Profile() {
     weeklyRecap:        true,
     reminderDaysBefore: 3,
   });
+
+  // ── Push notifications (real) ───────────────────────────────────────────────
+  const {
+    subscribed: pushSubscribed,
+    loading: pushLoading,
+    supported: pushSupported,
+    subscribe: subscribePush,
+    unsubscribe: unsubscribePush,
+  } = usePushSubscription(user?.id);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
+
+  const handleTogglePush = async () => {
+    setPushError(null);
+    setPushBusy(true);
+    try {
+      if (pushSubscribed) {
+        await unsubscribePush();
+      } else {
+        await subscribePush();
+      }
+    } catch {
+      setPushError('Could not update push notifications. Try again.');
+    } finally {
+      setPushBusy(false);
+    }
+  };
 
   // ── UI state ────────────────────────────────────────────────────────────────
   const [showChangelog, setShowChangelog]   = useState(false);
@@ -494,15 +524,29 @@ export default function Profile() {
         </div>
       </div>
 
-      {/* ── Notifications (placeholder) ── */}
+      {/* ── Notifications ── */}
       <SectionHeader title="Notifications" />
       <div className="mx-4 sm:mx-6 bg-white rounded-2xl shadow-[0_2px_12px_rgba(0,0,0,0.05)] overflow-hidden divide-y divide-slate-50">
         <SettingRow
           icon={Bell}
           label="Push notifications"
-          sub="Activity reminders & updates"
+          sub={
+            !pushSupported
+              ? 'Not supported on this device'
+              : pushLoading || pushBusy
+              ? 'Updating…'
+              : pushSubscribed
+              ? "On — you'll get alerts even when the app is closed"
+              : 'Activity reminders & updates'
+          }
           iconColor="bg-pink-50 text-pink-400"
-          action={<Toggle on={settings.notifications} onToggle={() => set('notifications', !settings.notifications)} />}
+          action={
+            <Toggle
+              on={pushSubscribed}
+              onToggle={handleTogglePush}
+              disabled={!pushSupported || pushLoading || pushBusy}
+            />
+          }
         />
         <SettingRow
           icon={Sparkles}
@@ -512,6 +556,9 @@ export default function Profile() {
           action={<Toggle on={settings.weeklyRecap} onToggle={() => set('weeklyRecap', !settings.weeklyRecap)} />}
         />
       </div>
+      {pushError && (
+        <p className="px-4 sm:px-6 text-[11px] text-rose-500 mt-1">{pushError}</p>
+      )}
 
       {/* ── Account actions (logout real, delete still placeholder-ish) ── */}
       <SectionHeader title="Account" />

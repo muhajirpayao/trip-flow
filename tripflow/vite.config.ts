@@ -25,6 +25,7 @@ export default defineConfig({
         // Cache the app shell (JS/CSS/HTML/images) for instant loads + offline use
         globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
         navigateFallback: '/index.html',
+        importScripts: ['push-sw.js'], // injects our push listener into the generated SW
         runtimeCaching: [
           {
             // Supabase REST calls — serve from cache instantly, refresh in background,
@@ -40,7 +41,7 @@ export default defineConfig({
         ],
       },
       devOptions: {
-        enabled: true, // lets you test the SW in `npm run dev`
+        enabled: true, 
       },
     }),
   ],

@@ -133,15 +133,13 @@ export default function NotificationsPage() {
         transition={{ delay: 0.15, duration: 0.3, ease: "easeOut" }}
         className="max-w-lg mx-auto px-4 py-6"
       >
-        <NotificationCenter
-          notifications={notifications}
-          onMarkRead={markRead}
-          onDelete={remove}
-          loading={loading} onMarkAllRead={function (): void {
-            throw new Error("Function not implemented.");
-          } } onClearAll={function (): void {
-            throw new Error("Function not implemented.");
-          } }        />
+<NotificationCenter
+  notifications={notifications}
+  onMarkRead={markRead}
+  onDelete={remove}
+  loading={loading}
+/>
+
       </motion.main>
 
       <div className="h-24" />
