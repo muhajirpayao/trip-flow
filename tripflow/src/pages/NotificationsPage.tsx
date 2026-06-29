@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, Bell } from "lucide-react";
+import { ArrowLeft, Bell, CheckCheck, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useNotifications } from "../hooks/useNotifications";
@@ -23,6 +24,17 @@ export default function NotificationsPage() {
   } = useNotifications(userId);
 
   const navigate = useNavigate();
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  const handleClearAll = () => {
+    if (confirmClear) {
+      clearAll();
+      setConfirmClear(false);
+    } else {
+      setConfirmClear(true);
+      setTimeout(() => setConfirmClear(false), 2500);
+    }
+  };
 
   return (
     <motion.div
@@ -41,7 +53,7 @@ export default function NotificationsPage() {
         transition={{ delay: 0.08, duration: 0.3, ease: "easeOut" }}
         className="sticky top-0 z-30 bg-white/70 backdrop-blur-xl border-b border-violet-100/60 px-4"
       >
-        <div className="max-w-lg mx-auto flex items-center gap-3 py-4">
+        <div className="relative max-w-lg mx-auto flex items-center gap-3 py-4">
           <button
             onClick={() => navigate(-1)}
             aria-label="Go back"
@@ -75,6 +87,42 @@ export default function NotificationsPage() {
               </motion.span>
             )}
           </div>
+
+          {/* ── Top-level actions ── */}
+          <div className="flex items-center gap-1.5">
+            {unreadCount > 0 && (
+              <button
+                onClick={markAllRead}
+                aria-label="Mark all as read"
+                className="w-9 h-9 rounded-2xl flex items-center justify-center bg-violet-50 hover:bg-violet-100 text-violet-500 transition-colors"
+              >
+                <CheckCheck size={16} strokeWidth={2.2} />
+              </button>
+            )}
+            {notifications.length > 0 && (
+              <button
+                onClick={handleClearAll}
+                aria-label="Clear all notifications"
+                className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-colors ${
+                  confirmClear
+                    ? "bg-rose-500 text-white"
+                    : "bg-slate-100 hover:bg-rose-50 text-slate-400 hover:text-rose-400"
+                }`}
+              >
+                <Trash2 size={16} strokeWidth={2.2} />
+              </button>
+            )}
+          </div>
+
+          {confirmClear && (
+            <motion.span
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="absolute top-14 right-4 text-[10px] font-semibold text-rose-500 bg-white shadow-md border border-rose-100 px-2 py-1 rounded-lg"
+            >
+              Tap again to confirm
+            </motion.span>
+          )}
         </div>
       </motion.header>
 
@@ -88,11 +136,12 @@ export default function NotificationsPage() {
         <NotificationCenter
           notifications={notifications}
           onMarkRead={markRead}
-          onMarkAllRead={markAllRead}
           onDelete={remove}
-          onClearAll={clearAll}
-          loading={loading}
-        />
+          loading={loading} onMarkAllRead={function (): void {
+            throw new Error("Function not implemented.");
+          } } onClearAll={function (): void {
+            throw new Error("Function not implemented.");
+          } }        />
       </motion.main>
 
       <div className="h-24" />

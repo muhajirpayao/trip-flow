@@ -32,14 +32,12 @@ export function NotificationCard({ notification, onMarkRead, onDelete }: Props) 
   const controls = useAnimation();
   const dragStartX = useRef(0);
 
-  // Background reveal colors based on drag direction
   const bgColor = useTransform(x, [-SWIPE_THRESHOLD, 0, SWIPE_THRESHOLD], [
-    "rgba(244,63,94,0.12)",   // swipe left  → red (delete)
+    "rgba(244,63,94,0.12)",
     "rgba(255,255,255,0)",
-    "rgba(139,92,246,0.12)",  // swipe right → violet (mark read)
+    "rgba(139,92,246,0.12)",
   ]);
 
-  // Icon opacity on each side
   const checkOpacity = useTransform(x, [0, SWIPE_THRESHOLD * 0.5, SWIPE_THRESHOLD], [0, 0.6, 1]);
   const trashOpacity = useTransform(x, [-SWIPE_THRESHOLD, -SWIPE_THRESHOLD * 0.5, 0], [1, 0.6, 0]);
 
@@ -47,15 +45,12 @@ export function NotificationCard({ notification, onMarkRead, onDelete }: Props) 
     const offset = info.offset.x;
 
     if (offset > SWIPE_THRESHOLD && !notification.is_read) {
-      // swipe right → mark read
       await controls.start({ x: 80, opacity: 0, transition: { duration: 0.2 } });
       onMarkRead(notification.id);
     } else if (offset < -SWIPE_THRESHOLD) {
-      // swipe left → delete
       await controls.start({ x: -80, opacity: 0, transition: { duration: 0.2 } });
       onDelete(notification.id);
     } else {
-      // snap back
       controls.start({ x: 0, transition: { type: "spring", stiffness: 400, damping: 30 } });
     }
   };
@@ -100,21 +95,23 @@ export function NotificationCard({ notification, onMarkRead, onDelete }: Props) 
         className={`
           relative group flex items-start gap-4 p-4
           rounded-3xl border cursor-grab active:cursor-grabbing
-          backdrop-blur-sm touch-pan-y
+          touch-pan-y transition-all duration-300
           ${
             notification.is_read
-              ? "bg-white/60 border-slate-100 shadow-sm"
-              : "bg-white/90 border-violet-100 shadow-md shadow-violet-100/40"
+              ? "bg-white/40 border-slate-100/70 backdrop-blur-md shadow-none"
+              : "bg-white/90 border-violet-100 shadow-md shadow-violet-100/40 backdrop-blur-sm"
           }
         `}
       >
-        {/* Unread accent dot */}
-        {!notification.is_read && (
+        {/* Unread accent dot / read checkmark */}
+        {!notification.is_read ? (
           <span className="absolute top-4 right-4 w-2 h-2 rounded-full bg-gradient-to-br from-pink-400 to-violet-500 shadow-sm" />
+        ) : (
+          <Check size={11} strokeWidth={3} className="absolute top-4 right-4 text-slate-300" />
         )}
 
         {/* Icon */}
-        <div className={`flex-shrink-0 w-11 h-11 rounded-2xl flex items-center justify-center ${config.bg}`}>
+        <div className={`flex-shrink-0 w-11 h-11 rounded-2xl flex items-center justify-center transition-all duration-300 ${config.bg} ${notification.is_read ? "opacity-50 grayscale" : ""}`}>
           <Icon size={20} className={config.iconColor} strokeWidth={2} />
         </div>
 
