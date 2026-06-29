@@ -1,17 +1,15 @@
-// routes/AdminRouteGuard.tsx
 import { useEffect } from 'react';
-import { useNavigate, Outlet } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
+import AdminLayout from '../components/admin/AdminLayout';
 
 export default function AdminRouteGuard() {
   const navigate = useNavigate();
   const isAdmin = sessionStorage.getItem('isAdmin') === 'true';
 
   useEffect(() => {
-    if (!isAdmin) {
-      navigate('/dashboard', { replace: true });
-    }
+    if (!isAdmin) navigate('/admin', { replace: true });
   }, [isAdmin, navigate]);
 
   if (!isAdmin) return null;
-  return <Outlet />;
+  return <AdminLayout />;  // ← wraps all admin pages with sidebar + topbar
 }

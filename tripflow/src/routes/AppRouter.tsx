@@ -1,4 +1,3 @@
-// src/routes/AppRouter.tsx
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
 import DashboardLayout from '../layouts/DashboardLayout';
@@ -6,15 +5,22 @@ import LandingPage from '../pages/LandingPage';
 import UnderDevelopment from '../pages/UnderDevelopment';
 import { useAuth } from '../context/AuthContext';
 import NotificationsPage from '../pages/NotificationsPage';
+import PlaceholderPage from '../components/common/PlaceholderPage';
 
-const AuthPage   = lazy(() => import('../pages/AuthPage'));
-const Home       = lazy(() => import('../pages/Home'));
-const Dashboard   = lazy(() => import('../pages/Dashboard'));
-const Itinerary  = lazy(() => import('../pages/Itinerary'));
-const Expenses   = lazy(() => import('../pages/Expenses'));
-const Places     = lazy(() => import('../pages/Places'));
-const Profile    = lazy(() => import('../pages/Profile'));
-const Settings   = lazy(() => import('../pages/Settings'));
+// ADMIN IMPORTS
+import AdminDashboard from '../pages/admin/AdminDashboard';
+import AdminAccessScreen from '../components/admin/AdminAccessScreen';
+import AdminRouteGuard from './AdminRouteGuard';
+import AdminNotificationsPage from '../pages/admin/AdminNotifications';
+
+const AuthPage = lazy(() => import('../pages/AuthPage'));
+const Home = lazy(() => import('../pages/Home'));
+const Dashboard = lazy(() => import('../pages/Dashboard'));
+const Itinerary = lazy(() => import('../pages/Itinerary'));
+const Expenses = lazy(() => import('../pages/Expenses'));
+const Places = lazy(() => import('../pages/Places'));
+const Profile = lazy(() => import('../pages/Profile'));
+const Settings = lazy(() => import('../pages/Settings'));
 
 const UNDER_DEVELOPMENT = false;
 
@@ -39,11 +45,34 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 }
 
 const router = UNDER_DEVELOPMENT
-  ? createBrowserRouter([
-      { path: '*', element: <UnderDevelopment /> },
-    ])
+  ? createBrowserRouter([{ path: '*', element: <UnderDevelopment /> }])
   : createBrowserRouter([
-      { path: '/', element: <LandingPage /> },
+      {
+        path: '/',
+        element: <LandingPage />,
+      },
+
+      // ADMIN LOGIN SCREEN
+      {
+        path: '/admin',
+        element: <AdminAccessScreen />,
+      },
+
+      // ADMIN PROTECTED ROUTES (all wrapped in AdminLayout via AdminRouteGuard)
+      {
+        path: '/admin',
+        element: <AdminRouteGuard />,
+        children: [
+          { path: 'dashboard',     element: <AdminDashboard /> },
+          { path: 'notifications', element: <AdminNotificationsPage /> },
+          { path: 'users',         element: <PlaceholderPage title="Users" icon={''} description={''} accent={''} /> },
+          { path: 'activity',      element: <PlaceholderPage title="Activity Logs" icon={''} description={''} accent={''} /> },
+          { path: 'announcements', element: <PlaceholderPage title="Announcements" icon={''} description={''} accent={''} /> },
+          { path: 'analytics',     element: <PlaceholderPage title="Analytics" icon={''} description={''} accent={''} /> },
+          { path: 'settings',      element: <PlaceholderPage title="Settings" icon={''} description={''} accent={''} /> },
+        ],
+      },
+
       {
         path: '/auth',
         element: (
@@ -52,6 +81,7 @@ const router = UNDER_DEVELOPMENT
           </GuestOnly>
         ),
       },
+
       {
         path: '/dashboard',
         element: (
@@ -60,18 +90,22 @@ const router = UNDER_DEVELOPMENT
           </RequireAuth>
         ),
         children: [
-          { index: true,            element: <Dashboard /> },   // "/dashboard" → Dashboard.tsx
-          { path: 'home',           element: <Home /> },         // "/dashboard/home" → Home.tsx
-          { path: 'trip',           element: <Dashboard /> },     // kept for any old links
-          { path: 'itinerary',      element: <Itinerary /> },
-          { path: 'expenses',       element: <Expenses /> },
-          { path: 'places',         element: <Places /> },
-          { path: 'profile',        element: <Profile /> },       // route kept for deep links
-          { path: 'settings',       element: <Settings /> },
-          { path: 'notifications',  element: <NotificationsPage /> },
+          { index: true,               element: <Dashboard /> },
+          { path: 'home',              element: <Home /> },
+          { path: 'trip',              element: <Dashboard /> },
+          { path: 'itinerary',         element: <Itinerary /> },
+          { path: 'expenses',          element: <Expenses /> },
+          { path: 'places',            element: <Places /> },
+          { path: 'profile',           element: <Profile /> },
+          { path: 'settings',          element: <Settings /> },
+          { path: 'notifications',     element: <NotificationsPage /> },
         ],
       },
-      { path: '*', element: <Navigate to="/" replace /> },
+
+      {
+        path: '*',
+        element: <Navigate to="/" replace />,
+      },
     ]);
 
 export default function AppRouter() {

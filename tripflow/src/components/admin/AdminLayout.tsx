@@ -21,7 +21,7 @@ export default function AdminLayout() {
   const meta = PAGE_META[pathname] ?? { title: 'Admin' };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] flex">
+    <div className="min-h-screen bg-gray-50 flex">
       {/* Desktop sidebar */}
       <AdminSidebar />
 

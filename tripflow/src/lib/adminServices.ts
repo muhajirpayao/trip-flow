@@ -37,7 +37,7 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
   ] = await Promise.all([
     supabase.from('profiles').select('*', { count: 'exact', head: true }),
     supabase.from('trips').select('*', { count: 'exact', head: true }),
-    supabase.from('documents').select('*', { count: 'exact', head: true }),
+    supabase.from('itinerary_activities').select('*', { count: 'exact', head: true }),
     supabase.from('notifications').select('*', { count: 'exact', head: true }),
     supabase.from('places').select('*', { count: 'exact', head: true }),
     supabase.from('expenses').select('*', { count: 'exact', head: true }),
