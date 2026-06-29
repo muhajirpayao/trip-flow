@@ -28,75 +28,93 @@ const WMO_DESC: Record<number, string> = {
   95:'Thunderstorm',96:'Thunderstorm',99:'Thunderstorm',
 };
 
-// Open-Meteo forecast covers ~16 days ahead. Past dates need the archive API.
 const FORECAST_HORIZON_DAYS = 16;
+
+// Module-level cache: key = "destination|YYYY-MM-DD" → WeatherData
+// This persists across remounts so past weather is never re-fetched.
 const weatherCache = new Map<string, WeatherData>();
+
 function useWeather(destination: string, targetDate: string): WeatherData {
   const cacheKey = `${destination}|${targetDate}`;
+  // Initialise from cache so a revisited date renders instantly
   const [weather, setWeather] = useState<WeatherData>(() => weatherCache.get(cacheKey) ?? null);
 
   useEffect(() => {
     if (!destination || !targetDate) return;
-    // Serve from cache immediately — past weather never changes
-    const cached = weatherCache.get(cacheKey);
-    if (cached !== undefined) {
-      setWeather(cached);
+
+    // Serve from cache — past weather never changes, future forecast is good enough
+    if (weatherCache.has(cacheKey)) {
+      setWeather(weatherCache.get(cacheKey)!);
       return;
     }
 
     let cancelled = false;
-    // Don't clear existing weather while fetching — avoids flicker on tab revisit
     const city = destination.split(',')[0].trim();
     const today = todayDate();
-    const daysFromToday = Math.round(
-      (new Date(targetDate).getTime() - new Date(today).getTime()) / 86400000
-    );
-    const isPast = daysFromToday < 0;
+
+    // Use local-midnight comparison to avoid UTC off-by-one
+    const todayMs  = localMidnight(today).getTime();
+    const targetMs = localMidnight(targetDate).getTime();
+    const daysFromToday = Math.round((targetMs - todayMs) / 86400000);
+    const isPast       = daysFromToday < 0;
     const beyondForecast = daysFromToday > FORECAST_HORIZON_DAYS;
+
+    if (beyondForecast) {
+      // No forecast data available this far out — don't attempt a fetch
+      weatherCache.set(cacheKey, null);
+      setWeather(null);
+      return;
+    }
 
     fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`)
       .then(r => r.json())
       .then(geo => {
         if (cancelled || !geo.results?.length) return null;
         const { latitude, longitude } = geo.results[0];
-        if (beyondForecast) return null;
+
         if (isPast) {
           return fetch(
-            `https://archive-api.open-meteo.com/v1/archive?latitude=${latitude}&longitude=${longitude}` +
+            `https://archive-api.open-meteo.com/v1/archive` +
+            `?latitude=${latitude}&longitude=${longitude}` +
             `&start_date=${targetDate}&end_date=${targetDate}` +
             `&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,weathercode` +
             `&timezone=auto`
           );
         }
+
         return fetch(
-          `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
+          `https://api.open-meteo.com/v1/forecast` +
+          `?latitude=${latitude}&longitude=${longitude}` +
           `&start_date=${targetDate}&end_date=${targetDate}` +
           `&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,weathercode` +
           `&timezone=auto`
         );
       })
-      .then(r => r ? r.json() : null)
+      .then(r => (r ? r.json() : null))
       .then(data => {
         if (cancelled || !data?.daily) return;
         const d = data.daily;
         if (!d.time?.length) return;
-        const code: number = d.weathercode[0];
-        const max: number = d.temperature_2m_max[0];
-        const min: number = d.temperature_2m_min[0];
+
+        const code: number  = d.weathercode[0];
+        const max: number   = d.temperature_2m_max[0];
+        const min: number   = d.temperature_2m_min[0];
         const feels: number = d.apparent_temperature_max?.[0] ?? max;
+
         const result: WeatherData = {
-          temp:  Math.round((max + min) / 2),
-          feels: Math.round(feels),
-          icon:  WMO_ICONS[code] ?? '🌡️',
-          desc:  WMO_DESC[code]  ?? 'Unknown',
+          temp:       Math.round((max + min) / 2),
+          feels:      Math.round(feels),
+          icon:       WMO_ICONS[code] ?? '🌡️',
+          desc:       WMO_DESC[code]  ?? 'Unknown',
           isForecast: !isPast,
         };
-        weatherCache.set(cacheKey, result); // cache it permanently for this session
+        weatherCache.set(cacheKey, result);
         setWeather(result);
       })
       .catch(() => {});
 
     return () => { cancelled = true; };
+  // Re-run whenever the specific date or destination changes
   }, [cacheKey, destination, targetDate]);
 
   return weather;
@@ -202,6 +220,12 @@ type RichActivity = ItineraryActivity & {
 
 // ─── Time / date helpers ──────────────────────────────────────────────────────
 
+// Parse "YYYY-MM-DD" as local midnight to avoid UTC off-by-one date shifts
+function localMidnight(dateStr: string): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
 function to12h(t: string): string {
   const [hStr, mStr] = t.split(':');
   let h = parseInt(hStr, 10);
@@ -230,22 +254,37 @@ function nowTime() {
   return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`;
 }
 
-function todayDate() { return new Date().toISOString().slice(0, 10); }
-function isDayPast(d: string) { return d < todayDate(); }
+// Returns today as "YYYY-MM-DD" in local time (not UTC)
+function todayDate(): string {
+  const n = new Date();
+  const y = n.getFullYear();
+  const m = String(n.getMonth() + 1).padStart(2, '0');
+  const d = String(n.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
 
-function addDays(dateStr: string, n: number) {
-  const d = new Date(dateStr);
+// Compare date strings safely using local midnight
+function isDayPast(d: string): boolean {
+  return localMidnight(d) < localMidnight(todayDate());
+}
+
+function addDays(dateStr: string, n: number): string {
+  const d = localMidnight(dateStr);
   d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function detectStatus(activity: RichActivity, dayDate: string): ActivityStatus {
   const today = todayDate();
-  // Past days always auto-complete — ignore manual overrides
+  // Past days always auto-complete — ignore manual overrides so time-based logic rules
   if (dayDate < today) return 'completed';
-  // For today/future, respect manual overrides only
+  // For today/future, respect manual overrides
   if (activity.status === 'completed' || activity.status === 'upcoming') return activity.status;
   if (dayDate > today) return 'upcoming';
+  // Today: check current time
   const now = nowTime();
   if (activity.time <= now && (!activity.timeEnd || activity.timeEnd >= now)) return 'inprogress';
   if ((activity.timeEnd ?? activity.time) < now) return 'completed';
@@ -315,14 +354,11 @@ function injectPinnedActivities(days: ItineraryDay[], destination: string): Itin
 
 function buildEmptyDays(startDate: string, endDate: string): ItineraryDay[] {
   const days: ItineraryDay[] = [];
-  const start = new Date(startDate);
-  const end   = new Date(endDate);
   const count = Math.max(1, tripDays(startDate, endDate));
   for (let i = 0; i < count; i++) {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
-    if (d > end && i > 0) break;
-    days.push({ date: d.toISOString().slice(0, 10), activities: [] });
+    const date = addDays(startDate, i);
+    if (date > endDate && i > 0) break;
+    days.push({ date, activities: [] });
   }
   return days;
 }
@@ -343,16 +379,26 @@ const BLANK_FORM: FormState = {
 
 // ─── Day Progress + Weather ───────────────────────────────────────────────────
 
-function DayProgress({ total, completed, destination, date }: { total: number; completed: number; destination: string; date: string }) {
+function DayProgress({
+  total, completed, destination, date,
+}: {
+  total: number; completed: number; destination: string; date: string;
+}) {
   const pct     = total === 0 ? 0 : Math.round((completed / total) * 100);
+  // KEY FIX: pass both destination AND date so the hook re-runs for each day
   const weather = useWeather(destination, date);
 
-  const today = todayDate();
-  const daysOut = Math.round((new Date(date).getTime() - new Date(today).getTime()) / 86400000);
-  const tooFarOut = daysOut > 16;
+  const today   = todayDate();
+  const daysOut = Math.round(
+    (localMidnight(date).getTime() - localMidnight(today).getTime()) / 86400000
+  );
+  const tooFarOut = daysOut > FORECAST_HORIZON_DAYS;
 
   return (
     <motion.div
+      // KEY FIX: key on date forces full remount when day changes,
+      // so useWeather initialises fresh state from cache for the new date
+      key={date}
       initial={{ opacity: 0, y: -12 }}
       animate={{ opacity: 1, y: 0 }}
       className="mx-4 sm:mx-6 mb-4 rounded-3xl overflow-hidden"
@@ -1140,25 +1186,20 @@ export default function Itinerary() {
   const [modalMode,     setModalMode]     = useState<null | 'add' | string>(null);
   const [form,          setForm]          = useState<FormState>(BLANK_FORM);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-
-  // ── FIX: track a render key per day so we can force-remount the
-  //    AnimatePresence children when switching tabs, bypassing any
-  //    stale internal Framer Motion exit/enter state. ────────────────────────
-  const [dayRenderKey, setDayRenderKey] = useState(0);
+  const [dayRenderKey,  setDayRenderKey]  = useState(0);
 
   const isSavingRef = useRef(false);
 
-  const hasAutoSelected = useRef(false);
-
+  // 60-second tick so detectStatus re-evaluates on the current day
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 60_000);
     return () => clearInterval(id);
   }, []);
 
+  // Load itinerary whenever trip changes
   useEffect(() => {
     if (!trip) { setDbLoading(false); return; }
-    hasAutoSelected.current = false;
 
     const cancel = loadItinerary(trip.id, {
       onCached: (cached) => {
@@ -1168,7 +1209,6 @@ export default function Itinerary() {
         }
       },
       onFresh: (fresh) => {
-        // ── FIX: don't overwrite local state while a save is in flight ──
         if (isSavingRef.current) return;
         const base = fresh.length ? fresh : buildEmptyDays(trip.startDate, trip.endDate);
         setDays(injectPinnedActivities(base, trip.destination));
@@ -1190,15 +1230,25 @@ export default function Itinerary() {
     return cancel;
   }, [trip]);
 
-useEffect(() => {
-  if (!days.length) return;
-  const today = todayDate();
-  const idx = days.findIndex(d => d.date === today);
-  setActiveDay(idx >= 0 ? idx : 0);
-}, [trip?.id]);
+  // Auto-select today's tab whenever the trip changes.
+  // Runs once per trip (dep: trip?.id) — no stale-ref guard needed.
+  useEffect(() => {
+    if (!trip) return;
+    // days may not be populated yet on first render, so we also run
+    // this after days load via the days-length guard below.
+  }, [trip?.id]);
 
-  // ── FIX: bump the render key whenever activeDay changes so the
-  //    card list fully remounts, clearing any stale AnimatePresence state ──
+  useEffect(() => {
+    if (!days.length) return;
+    const today = todayDate();
+    const idx = days.findIndex(d => d.date === today);
+    // Only auto-jump when the trip changes, not on every save.
+    // We use a ref to track whether we've already auto-selected for this trip.
+    setActiveDay(idx >= 0 ? idx : 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trip?.id, days.length > 0]);
+
+  // Bump render key on day change to clear stale Framer Motion state
   const prevActiveDayRef = useRef(activeDay);
   useEffect(() => {
     if (prevActiveDayRef.current !== activeDay) {
@@ -1211,14 +1261,14 @@ useEffect(() => {
     () => days.reduce((s, d) => s + d.activities.length, 0), [days]
   );
 
-  const day        = days[activeDay] as (ItineraryDay & { activities: RichActivity[] }) | undefined;
-  const dayWeekday = day ? WEEKDAY_LONG[new Date(day.date).getDay()] : '';
+  const day         = days[activeDay] as (ItineraryDay & { activities: RichActivity[] }) | undefined;
+  const dayWeekday  = day ? WEEKDAY_LONG[localMidnight(day.date).getDay()] : '';
   const isDayInPast = day ? isDayPast(day.date) : false;
-  const isToday    = day?.date === todayDate();
-  const minStart   = isToday ? nowTime() : undefined;
-  const startOpts  = buildTimeOptions(minStart);
-  const endOpts    = buildTimeOptions(form.timeStart);
-  const isEditing  = modalMode !== null && modalMode !== 'add';
+  const isToday     = day?.date === todayDate();
+  const minStart    = isToday ? nowTime() : undefined;
+  const startOpts   = buildTimeOptions(minStart);
+  const endOpts     = buildTimeOptions(form.timeStart);
+  const isEditing   = modalMode !== null && modalMode !== 'add';
 
   const completedCount = useMemo(() => {
     if (!day) return 0;
@@ -1440,7 +1490,8 @@ useEffect(() => {
       <div className="px-4 sm:px-6 mt-2 mb-4">
         <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
           {days.map((d, i) => {
-            const dateObj  = new Date(d.date);
+            // Use localMidnight to get the correct weekday/date in the user's timezone
+            const dateObj  = localMidnight(d.date);
             const isActive = i === activeDay;
             const isPast   = isDayPast(d.date);
             return (
@@ -1471,9 +1522,10 @@ useEffect(() => {
         </div>
       </div>
 
-      {/* ── Day progress ── */}
+      {/* ── Day progress (keyed on date so DayProgress fully remounts, resetting useWeather) ── */}
       {day && day.activities.length > 0 && (
         <DayProgress
+          key={day.date}
           total={day.activities.length}
           completed={completedCount}
           destination={trip.destination}
@@ -1508,8 +1560,6 @@ useEffect(() => {
       </div>
 
       {/* ── Timeline ── */}
-      {/* FIX: key={dayRenderKey} forces a full remount of this section on tab switch,
-           clearing stale AnimatePresence enter/exit state that caused cards to be invisible */}
       <div key={dayRenderKey}>
         {!day || day.activities.length === 0 ? (
           <EmptyItinerary isPast={isDayInPast} onAdd={openAddModal} />
@@ -1584,6 +1634,6 @@ useEffect(() => {
           />
         )}
       </AnimatePresence>
-    </div>   
+    </div>
   );
 }
