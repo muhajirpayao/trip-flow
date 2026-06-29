@@ -30,17 +30,23 @@ const WMO_DESC: Record<number, string> = {
 
 // Open-Meteo forecast covers ~16 days ahead. Past dates need the archive API.
 const FORECAST_HORIZON_DAYS = 16;
-
+const weatherCache = new Map<string, WeatherData>();
 function useWeather(destination: string, targetDate: string): WeatherData {
-  const [weather, setWeather] = useState<WeatherData>(null);
+  const cacheKey = `${destination}|${targetDate}`;
+  const [weather, setWeather] = useState<WeatherData>(() => weatherCache.get(cacheKey) ?? null);
 
   useEffect(() => {
     if (!destination || !targetDate) return;
+    // Serve from cache immediately — past weather never changes
+    const cached = weatherCache.get(cacheKey);
+    if (cached !== undefined) {
+      setWeather(cached);
+      return;
+    }
+
     let cancelled = false;
-    setWeather(null); // clear stale weather while we fetch the new day's data
-
+    // Don't clear existing weather while fetching — avoids flicker on tab revisit
     const city = destination.split(',')[0].trim();
-
     const today = todayDate();
     const daysFromToday = Math.round(
       (new Date(targetDate).getTime() - new Date(today).getTime()) / 86400000
@@ -53,14 +59,8 @@ function useWeather(destination: string, targetDate: string): WeatherData {
       .then(geo => {
         if (cancelled || !geo.results?.length) return null;
         const { latitude, longitude } = geo.results[0];
-
-        if (beyondForecast) {
-          // No real data exists this far out — don't fabricate it.
-          return null;
-        }
-
+        if (beyondForecast) return null;
         if (isPast) {
-          // Historical weather for a specific past date.
           return fetch(
             `https://archive-api.open-meteo.com/v1/archive?latitude=${latitude}&longitude=${longitude}` +
             `&start_date=${targetDate}&end_date=${targetDate}` +
@@ -68,8 +68,6 @@ function useWeather(destination: string, targetDate: string): WeatherData {
             `&timezone=auto`
           );
         }
-
-        // Today or a future date within the forecast horizon.
         return fetch(
           `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
           `&start_date=${targetDate}&end_date=${targetDate}` +
@@ -82,24 +80,24 @@ function useWeather(destination: string, targetDate: string): WeatherData {
         if (cancelled || !data?.daily) return;
         const d = data.daily;
         if (!d.time?.length) return;
-
         const code: number = d.weathercode[0];
         const max: number = d.temperature_2m_max[0];
         const min: number = d.temperature_2m_min[0];
         const feels: number = d.apparent_temperature_max?.[0] ?? max;
-
-        setWeather({
+        const result: WeatherData = {
           temp:  Math.round((max + min) / 2),
           feels: Math.round(feels),
           icon:  WMO_ICONS[code] ?? '🌡️',
           desc:  WMO_DESC[code]  ?? 'Unknown',
           isForecast: !isPast,
-        });
+        };
+        weatherCache.set(cacheKey, result); // cache it permanently for this session
+        setWeather(result);
       })
       .catch(() => {});
 
     return () => { cancelled = true; };
-  }, [destination, targetDate]);
+  }, [cacheKey, destination, targetDate]);
 
   return weather;
 }
@@ -242,9 +240,11 @@ function addDays(dateStr: string, n: number) {
 }
 
 function detectStatus(activity: RichActivity, dayDate: string): ActivityStatus {
-  if (activity.status === 'completed' || activity.status === 'upcoming') return activity.status;
   const today = todayDate();
+  // Past days always auto-complete — ignore manual overrides
   if (dayDate < today) return 'completed';
+  // For today/future, respect manual overrides only
+  if (activity.status === 'completed' || activity.status === 'upcoming') return activity.status;
   if (dayDate > today) return 'upcoming';
   const now = nowTime();
   if (activity.time <= now && (!activity.timeEnd || activity.timeEnd >= now)) return 'inprogress';
@@ -1190,13 +1190,12 @@ export default function Itinerary() {
     return cancel;
   }, [trip]);
 
-  useEffect(() => {
-    if (!days.length || hasAutoSelected.current) return;
-    const today = todayDate();
-    const idx = days.findIndex(d => d.date === today);
-    if (idx >= 0) setActiveDay(idx);
-    hasAutoSelected.current = true;
-  }, [days]);
+useEffect(() => {
+  if (!days.length) return;
+  const today = todayDate();
+  const idx = days.findIndex(d => d.date === today);
+  setActiveDay(idx >= 0 ? idx : 0);
+}, [trip?.id]);
 
   // ── FIX: bump the render key whenever activeDay changes so the
   //    card list fully remounts, clearing any stale AnimatePresence state ──
