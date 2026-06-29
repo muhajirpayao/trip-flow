@@ -307,7 +307,7 @@ function DayProgress({ total, completed, destination }: { total: number; complet
       initial={{ opacity: 0, y: -12 }}
       animate={{ opacity: 1, y: 0 }}
       className="mx-4 sm:mx-6 mb-4 rounded-3xl overflow-hidden"
-      style={{ background: 'linear-gradient(135deg, #6b38d4 0%, #8455ef 100%)' }}
+      style={{ background: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 50%, #ec4899 100%)' }}
     >
       <div className="relative p-4 sm:p-5 overflow-hidden">
         <div className="absolute -top-10 -right-10 w-36 h-36 rounded-full bg-white/10 pointer-events-none" />

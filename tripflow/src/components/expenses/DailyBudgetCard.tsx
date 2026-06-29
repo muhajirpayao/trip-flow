@@ -11,6 +11,7 @@ interface Props {
   startDate: string;
   endDate: string;
   expenses: Expense[];
+  activeDate: string;
 }
 
 function tripDays(start: string, end: string) {

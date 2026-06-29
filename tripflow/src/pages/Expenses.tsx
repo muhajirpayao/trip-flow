@@ -75,9 +75,7 @@ export default function Expenses() {
 
   const spent = expenses.reduce((s, e) => s + e.amount, 0);
 
-  // Build the full list of trip days from start → end date, same approach as
-  // Itinerary.tsx's day selector. This way the tabs always reflect the trip's
-  // designated date range, even for days with zero expenses yet.
+  // Build the full list of trip days from start → end date.
   const tripDayList = useMemo(() => {
     if (!trip) return [];
     const list: string[] = [];
@@ -101,10 +99,11 @@ export default function Expenses() {
     setActiveDay(idx >= 0 ? idx : 0);
   }, [tripDayList]);
 
-  const activeDate = tripDayList[activeDay];
+  // FIX: activeDate is the canonical selected date string (YYYY-MM-DD).
+  // It's passed down to both DailyBudgetCard and ExpenseModal so they
+  // always operate on the day the user actually has selected.
+  const activeDate = tripDayList[activeDay] ?? new Date().toISOString().slice(0, 10);
 
-  // Each expense stays on the day it already has — we're only filtering
-  // the already-loaded data down to the selected tab, not reassigning days.
   const dayExpenses = expenses.filter(e => e.expenseDate.slice(0, 10) === activeDate);
 
   if (!trip) {
@@ -148,16 +147,17 @@ export default function Expenses() {
         <BudgetOverview budget={trip.budget} spent={spent} currency={trip.currency} />
       </div>
 
-      {/* Daily Budget */}
+      {/* Daily Budget — FIX: now receives activeDate so it shows spend for the selected day */}
       <div className="px-4 mb-4">
         <DailyBudgetCard
           budget={trip.budget} currency={trip.currency}
           startDate={trip.startDate} endDate={trip.endDate}
           expenses={expenses}
+          activeDate={activeDate}
         />
       </div>
 
-      {/* Day selector — mirrors Itinerary.tsx, built from the trip's date range */}
+      {/* Day selector */}
       <div className="px-4 mb-4">
         <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
           {tripDayList.map((d, i) => {
@@ -236,11 +236,12 @@ export default function Expenses() {
         <Plus size={24} strokeWidth={2.5} className="text-white" />
       </motion.button>
 
-      {/* Modal — passes tripCurrency so it knows the home currency */}
+      {/* Modal — FIX: passes activeDate so new expenses default to the selected day */}
       <ExpenseModal
         open={modalOpen}
         editing={editing}
         tripCurrency={trip.currency}
+        defaultDate={activeDate}
         onClose={() => { setModalOpen(false); setEditing(null); }}
         onSubmit={handleSubmit}
       />

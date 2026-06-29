@@ -37,14 +37,18 @@ interface Props {
   open: boolean;
   editing?: Expense | null;
   tripCurrency: Currency;
+  /** FIX: the date of the currently-selected day tab — used as default for new expenses */
+  defaultDate?: string;
   onClose: () => void;
   onSubmit: (data: ExpenseFormData) => Promise<void>;
 }
 
 export default function ExpenseModal({
-  open, editing, tripCurrency, onClose, onSubmit,
+  open, editing, tripCurrency, defaultDate, onClose, onSubmit,
 }: Props) {
+  // FIX: use the selected day (defaultDate) rather than always falling back to today
   const today = new Date().toISOString().slice(0, 10);
+  const resolvedDefault = defaultDate ?? today;
 
   const [inputCurrency, setInputCurrency] = useState<Currency>(tripCurrency);
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
@@ -57,7 +61,11 @@ export default function ExpenseModal({
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { amount: '', category: 'food', description: '', notes: '', expenseDate: today },
+    defaultValues: {
+      amount: '', category: 'food', description: '', notes: '',
+      // FIX: initialise with the selected day, not today
+      expenseDate: resolvedDefault,
+    },
   });
 
   const loadRates = useCallback(async () => {
@@ -88,11 +96,15 @@ export default function ExpenseModal({
       setInputCurrency(tripCurrency);
     } else {
       setRawAmount('');
-      reset({ amount: '', category: 'food', description: '', notes: '', expenseDate: today });
+      // FIX: reset to the selected day, not today
+      reset({
+        amount: '', category: 'food', description: '', notes: '',
+        expenseDate: resolvedDefault,
+      });
       setInputCurrency(tripCurrency);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, open]);
+  }, [editing, open, resolvedDefault]);
 
   const formatWithCommas = (val: string) => {
     const clean = val.replace(/[^0-9.]/g, '');
