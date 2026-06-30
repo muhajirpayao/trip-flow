@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LayoutDashboard, Calendar, Wallet, MapPin, Home as HomeIcon, User, History, LogOut } from 'lucide-react';
 import { NotificationBell } from '../components/notifications/NotificationBell';
-import { NotificationToast } from '../components/notifications/NotificationToast';
 import { useNotifications } from '../hooks/useNotifications';
 import { useAuth } from '../context/AuthContext';
+import { NotificationToast } from '../components/notifications/NotificationToast';
 
 const NAV_ITEMS = [
   { to: '/dashboard/itinerary', icon: Calendar,        label: 'Itinerary' },
@@ -14,8 +14,6 @@ const NAV_ITEMS = [
   { to: '/dashboard/places',    icon: MapPin,          label: 'Places'    },
   { to: '/dashboard/trip',      icon: LayoutDashboard, label: 'Dashboard' },
 ];
-
-const SHOW_HEADER_ICONS_ON = ['/dashboard/home', '/dashboard/trip', '/dashboard'];
 
 function useHideOnScroll() {
   const [hidden, setHidden] = useState(false);
@@ -37,7 +35,9 @@ function useHideOnScroll() {
   return hidden;
 }
 
-function ProfileMenu() {
+// ── Exported so pages (Dashboard.tsx, Home.tsx, etc.) can drop this directly
+//    into their own header markup instead of it floating as a fixed overlay. ──
+export function ProfileMenu() {
   const [open, setOpen] = useState(false);
   const { signOut } = useAuth();
   const navigate = useNavigate();
@@ -62,7 +62,7 @@ function ProfileMenu() {
         {open && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-            <motion.div
+            <motion.div  
               initial={{ opacity: 0, y: -6, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -6, scale: 0.96 }}
@@ -99,32 +99,32 @@ function ProfileMenu() {
   );
 }
 
+// ── Bundled icon pair, exported for pages to place inside their own header.
+//    Plain inline-flex, no position:fixed — it scrolls naturally with the page. ──
+export function HeaderIcons({ unreadCount }: { unreadCount: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="relative w-9 h-9 rounded-full bg-white/20 border-2 border-white/30 flex items-center justify-center">
+        <NotificationBell unreadCount={unreadCount} />
+      </div>
+      <ProfileMenu />
+    </div>
+  );
+}
+
 export default function DashboardLayout() {
   const hidden = useHideOnScroll();
   const { user } = useAuth();
   const userId = user?.id;
   const { unreadCount, latestNew, dismissToast } = useNotifications(userId);
-  const location = useLocation();
-
-  const showHeaderIcons = SHOW_HEADER_ICONS_ON.includes(location.pathname);
 
   return (
     <div className="flex flex-col min-h-screen w-full bg-slate-50">
       <NotificationToast notification={latestNew} onDismiss={dismissToast} />
 
-      {/* ── Fixed top-right icon bar — always stays at top regardless of scroll ── */}
-      {showHeaderIcons && (
-        <div
-          className="fixed top-0 right-0 z-40 flex items-center gap-2 px-4 pt-4 pb-2"
-          // No background — sits on top of whatever the page header color is
-        >
-          <NotificationBell unreadCount={unreadCount} />
-          <ProfileMenu />
-        </div>
-      )}
-
-      <main className="flex-1 pb-20 overflow-y-auto no-scrollbar">
-        <Outlet />
+      {/* Pages access unreadCount via Outlet context and render <HeaderIcons /> themselves */}
+      <main className="flex-1 pb-20">
+        <Outlet context={{ unreadCount }} />
       </main>
 
       {/* ── Bottom Nav ── */}

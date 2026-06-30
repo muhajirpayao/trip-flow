@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTrip } from '../context/TripContext';
 import type { Trip } from '../types';
@@ -8,10 +8,12 @@ import { useDestinationWeather, getTimeGreeting } from '../hooks/useDestinationW
 import { useDestinationPhotos } from '../hooks/useDestinationPhotos';
 import { tripDays, fmtDate, fmtShort, fmtCurrency } from '../utils';
 import { supabase } from '../lib/supabase';
+import { HeaderIcons } from '../layouts/DashboardLayout';
 import {
   Calendar, Wallet, MapPin,
   Plus, ArrowRight, Trash2, Pencil, X, AlertTriangle,
   Star, Plane, WifiOff, Camera, ImageIcon, Upload, Eye, ZoomIn,
+  CheckCircle2, Circle,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -23,6 +25,15 @@ interface TripDocument {
   label: string;
   notes?: string;
   file_url?: string;
+  created_at?: string;
+}
+
+interface TripActivity {
+  id: string;
+  trip_id: string;
+  title: string;
+  completed?: boolean;
+  date?: string;
   created_at?: string;
 }
 
@@ -217,7 +228,6 @@ function useDocuments(tripId: string | undefined) {
   };
 
   const removeDoc = async (id: string, fileUrl?: string) => {
-    // Delete from storage if there's a file
     if (fileUrl) {
       try {
         const url   = new URL(fileUrl);
@@ -234,15 +244,66 @@ function useDocuments(tripId: string | undefined) {
   return { docs, loading, addDoc, removeDoc };
 }
 
+// ── useActivities ─────────────────────────────────────────────────────────────
+// Pulls the trip's planned activities so the "Activities" stat card on the
+// dashboard reflects real data instead of a hardcoded "0".
+// Table: `itinerary_activities` (id, trip_id, title, completed (bool), date).
+function useActivities(tripId: string | undefined) {
+  const [activities, setActivities] = useState<TripActivity[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!tripId) return;
+    setLoading(true);
+    supabase
+      .from('itinerary_activities')
+      .select('*')
+      .eq('trip_id', tripId)
+      .then(({ data, error }) => {
+        if (error) console.error('Activities fetch error:', error);
+        setActivities(data ?? []);
+        setLoading(false);
+      });
+  }, [tripId]);
+
+  return { activities, loading };
+}
+
+// ── useTripSpending ───────────────────────────────────────────────────────────
+// Sums the trip's logged expenses so the Budget card can show how much of the
+// budget has actually been spent. Table: `expenses` (id, trip_id, amount).
+function useTripSpending(tripId: string | undefined) {
+  const [spent, setSpent] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!tripId) return;
+    setLoading(true);
+    supabase
+      .from('expenses')
+      .select('amount')
+      .eq('trip_id', tripId)
+      .then(({ data, error }) => {
+        if (error) console.error('Expenses fetch error:', error);
+        const rows = (data ?? []) as { amount: number | string | null }[];
+        const total = rows.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+        setSpent(total);
+        setLoading(false);
+      });
+  }, [tripId]);
+
+  return { spent, loading };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 export default function Dashboard() {
+  const { unreadCount } = useOutletContext<{ unreadCount: number }>();
   const { trip: liveTrip, clearTrip, deleteTrip, updateTrip } = useTrip();
   const [showOnboarding, setShowOnboarding]   = useState(!liveTrip);
   const [confirmRemove, setConfirmRemove]     = useState(false);
   const [removing, setRemoving]               = useState(false);
   const [showEditModal, setShowEditModal]     = useState(false);
   const [saving, setSaving]                   = useState(false);
-  const [showAvatarMenu, setShowAvatarMenu]   = useState(false);
   const [photoError, setPhotoError]           = useState(false);
   const [photoLoaded, setPhotoLoaded]         = useState(false);
   const [isOffline, setIsOffline]             = useState(!navigator.onLine);
@@ -298,6 +359,13 @@ export default function Dashboard() {
 
   // ── Documents ──
   const { docs, loading: docsLoading, addDoc, removeDoc } = useDocuments(trip?.id);
+
+  // ── Activities ──
+  const { activities, loading: activitiesLoading } = useActivities(trip?.id);
+  const completedActivities = activities.filter(a => a.completed).length;
+
+  // ── Spending ──
+  const { spent, loading: spentLoading } = useTripSpending(trip?.id);
 
   // Reset photo state on source change
   const prevHero = useRef<string | null>(null);
@@ -356,9 +424,7 @@ export default function Dashboard() {
   const days  = Math.max(0, Math.round((startTarget.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
   const total = tripDays(trip.startDate, trip.endDate);
 
-  // Is the user currently on the trip (started but not ended)?
   const isTravelling = today >= startTarget && today <= endTarget;
-  // Has the trip fully ended?
   const tripEnded = today > endTarget;
 
   const typeIcon = { solo: '🧳', couple: '💑', family: '👨‍👩‍👧', friends: '👯' }[trip.travelType];
@@ -377,11 +443,14 @@ export default function Dashboard() {
   const departureBadge = monthDay(startObj);
   const nextDayBadge   = monthDay(nextObj);
 
+  const budgetPct = trip.budget > 0 ? Math.min(100, (spent / trip.budget) * 100) : 0;
+  const activitiesPct = activities.length > 0 ? (completedActivities / activities.length) * 100 : 0;
+
   const STATS = [
     { id: 'days',       icon: '📅', label: 'Total Days',  value: total.toString(),                        sub: 'days of travel',  small: false, pct: Math.min(100, (total / 30) * 100) },
-    { id: 'budget',     icon: '💰', label: 'Budget',      value: fmtCurrency(trip.budget, trip.currency), sub: 'total budget',    small: true,  pct: trip.budget > 0 ? 60 : 0 },
+    { id: 'budget',     icon: '💰', label: 'Budget',      value: fmtCurrency(trip.budget, trip.currency), sub: 'total budget',    small: true,  pct: budgetPct },
     { id: 'places',     icon: '📍', label: 'Places',      value: '0',                                     sub: 'saved spots',     small: false, pct: 0 },
-    { id: 'activities', icon: '✅', label: 'Activities',  value: '0',                                     sub: 'planned so far',  small: false, pct: 0 },
+    { id: 'activities', icon: '✅', label: 'Activities',  value: activities.length.toString(),            sub: `${completedActivities} completed`, small: false, pct: activitiesPct },
   ];
 
   // ── Remove trip ──
@@ -530,35 +599,9 @@ export default function Dashboard() {
             </p>
           </div>
 
-          <div className="relative flex-shrink-0">
-            <AnimatePresence>
-              {showAvatarMenu && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowAvatarMenu(false)} />
-                  <motion.div
-                    initial={{ opacity: 0, y: -6, scale: 0.96 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -6, scale: 0.96 }}
-                    transition={{ duration: 0.15 }}
-                    className="absolute right-0 top-13 mt-2 w-40 bg-white rounded-2xl shadow-xl shadow-black/10 overflow-hidden z-50"
-                  >
-                    <button
-                      onClick={() => { setShowAvatarMenu(false); openEditModal(); }}
-                      className="w-full flex items-center gap-2 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-                    >
-                      <Pencil size={14} className="text-violet-500" /> Edit trip
-                    </button>
-                    <div className="h-px bg-slate-100" />
-                    <button
-                      onClick={() => { setShowAvatarMenu(false); setConfirmRemove(true); }}
-                      className="w-full flex items-center gap-2 px-4 py-3 text-sm font-semibold text-rose-500 hover:bg-rose-50 transition-colors"
-                    >
-                      <Trash2 size={14} /> Remove trip
-                    </button>
-                  </motion.div>
-                </>
-              )}
-            </AnimatePresence>
+          {/* ── Header icons: notification bell + profile only ── */}
+          <div className="flex-shrink-0">
+            <HeaderIcons unreadCount={unreadCount} />
           </div>
         </div>
       </div>
@@ -621,7 +664,17 @@ export default function Dashboard() {
               <p className={`font-black text-slate-900 leading-tight truncate ${s.small ? 'text-sm sm:text-base' : 'text-xl sm:text-2xl'}`}>
                 {s.value}
               </p>
-              <p className="text-[11px] text-slate-400 mt-0.5 truncate">{s.sub}</p>
+              {s.id === 'budget' ? (
+                spentLoading ? (
+                  <div className="h-3 w-20 mt-1 rounded bg-slate-100 animate-pulse" />
+                ) : (
+                  <p className="text-[11px] text-slate-400 mt-0.5 truncate">
+                    {fmtCurrency(spent, trip.currency)} spent
+                  </p>
+                )
+              ) : (
+                <p className="text-[11px] text-slate-400 mt-0.5 truncate">{s.sub}</p>
+              )}
             </div>
           ))}
         </motion.div>
@@ -843,10 +896,57 @@ export default function Dashboard() {
           </div>
         </motion.div>
 
-        {/* ── 7. Documents ── */}
+        {/* ── 7. Activities ── */}
         <motion.div
           initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.2, delay: 0.18 }}
+          transition={{ duration: 0.2, delay: 0.21 }}
+          className="bg-white rounded-3xl p-4 sm:p-5 shadow-[0_2px_12px_rgba(0,0,0,0.05)]"
+        >
+          <div className="flex justify-between items-center mb-3">
+            <h2 className="text-base font-black text-slate-900">Activities</h2>
+            <button onClick={() => navigate('/dashboard/itinerary')}
+              className="flex items-center gap-1 text-xs font-semibold text-violet-500">
+              View all <ArrowRight size={12} />
+            </button>
+          </div>
+
+          {activitiesLoading ? (
+            <div className="space-y-2">
+              {[1, 2].map(i => (
+                <div key={i} className="h-12 rounded-2xl bg-slate-100 animate-pulse" />
+              ))}
+            </div>
+          ) : activities.length === 0 ? (
+            <div className="text-center py-6 text-slate-400">
+              <div className="text-3xl mb-2">🗒️</div>
+              <p className="text-sm font-semibold">No activities yet</p>
+              <p className="text-xs mt-0.5">Add stops to your itinerary to see them here</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {activities.slice(0, 5).map(a => (
+                <div key={a.id} className="flex items-center gap-3 bg-slate-50/60 rounded-2xl px-3.5 py-3">
+                  {a.completed ? (
+                    <CheckCircle2 size={18} className="text-emerald-500 flex-shrink-0" />
+                  ) : (
+                    <Circle size={18} className="text-slate-300 flex-shrink-0" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-bold truncate ${a.completed ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
+                      {a.title}
+                    </p>
+                    {a.date && <p className="text-xs text-slate-400 truncate">{fmtShort(a.date)}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </motion.div>
+
+        {/* ── 8. Documents ── */}
+        <motion.div
+          initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.2, delay: 0.24 }}
           className="bg-white rounded-3xl p-4 sm:p-5 shadow-[0_2px_12px_rgba(0,0,0,0.05)]"
         >
           <div className="flex justify-between items-center mb-3">
@@ -878,7 +978,6 @@ export default function Dashboard() {
                 const meta = DOC_TYPE_META[doc.type] ?? DOC_TYPE_META.other;
                 return (
                   <div key={doc.id} className="flex items-center gap-3 bg-slate-50/60 rounded-2xl px-3.5 py-3 group">
-                    {/* Thumbnail or emoji icon */}
                     {doc.file_url ? (
                       <button
                         onClick={() => setViewingDoc(doc)}
@@ -1066,7 +1165,6 @@ export default function Dashboard() {
                 <div>
                   <label className="text-xs font-bold text-slate-500 mb-1.5 block">Photo (optional)</label>
 
-                  {/* Hidden file inputs */}
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -1084,7 +1182,6 @@ export default function Dashboard() {
                   />
 
                   {docPhotoPreview ? (
-                    /* Preview with remove button */
                     <div className="relative rounded-2xl overflow-hidden border border-slate-200">
                       <img src={docPhotoPreview} alt="Preview" className="w-full h-48 object-cover" />
                       <button
@@ -1098,7 +1195,6 @@ export default function Dashboard() {
                       </div>
                     </div>
                   ) : (
-                    /* Upload buttons */
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         onClick={() => cameraInputRef.current?.click()}
