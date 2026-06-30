@@ -1,46 +1,212 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { motion, AnimatePresence, useMotionValue, useTransform, useAnimation } from 'framer-motion';
 import { useTrip } from '../context/TripContext';
 import { tripDays, fmtDate } from '../utils';
-import { loadItinerary, saveItinerary } from '../lib/itineraryService';
+import { loadItinerary, saveItinerary } from '../lib/itineraryServiceCached';
 import type { ItineraryActivity, ItineraryDay } from '../lib/itineraryService';
 import {
   Plus, Clock, MapPin, Trash2, X, Calendar as CalendarIcon,
-  Pencil, AlertTriangle, StickyNote, Sparkles, CheckCircle2, Circle,
+  Pencil, AlertTriangle, StickyNote, Sparkles, CheckCircle2,
 } from 'lucide-react';
 
-// ─── Category system ───────────────────────────────────────────────────────────
+// ─── Weather hook ─────────────────────────────────────────────────────────────
+
+type WeatherData = { temp: number; desc: string; icon: string; feels: number; isForecast: boolean } | null;
+
+const WMO_ICONS: Record<number, string> = {
+  0:'☀️',1:'🌤️',2:'⛅',3:'☁️',45:'🌫️',48:'🌫️',
+  51:'🌦️',53:'🌦️',55:'🌧️',61:'🌧️',63:'🌧️',65:'🌧️',
+  71:'🌨️',73:'🌨️',75:'❄️',80:'🌦️',81:'🌧️',82:'⛈️',
+  95:'⛈️',96:'⛈️',99:'⛈️',
+};
+
+const WMO_DESC: Record<number, string> = {
+  0:'Clear sky',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',
+  45:'Foggy',48:'Icy fog',51:'Light drizzle',53:'Drizzle',55:'Heavy drizzle',
+  61:'Light rain',63:'Rain',65:'Heavy rain',71:'Light snow',73:'Snow',
+  75:'Heavy snow',80:'Showers',81:'Heavy showers',82:'Violent showers',
+  95:'Thunderstorm',96:'Thunderstorm',99:'Thunderstorm',
+};
+
+const FORECAST_HORIZON_DAYS = 16;
+
+// Module-level cache: key = "destination|YYYY-MM-DD" → WeatherData
+// This persists across remounts so past weather is never re-fetched.
+const weatherCache = new Map<string, WeatherData>();
+
+function useWeather(destination: string, targetDate: string): WeatherData {
+  const cacheKey = `${destination}|${targetDate}`;
+  // Initialise from cache so a revisited date renders instantly
+  const [weather, setWeather] = useState<WeatherData>(() => weatherCache.get(cacheKey) ?? null);
+
+  useEffect(() => {
+    if (!destination || !targetDate) return;
+
+    // Serve from cache — past weather never changes, future forecast is good enough
+    if (weatherCache.has(cacheKey)) {
+      setWeather(weatherCache.get(cacheKey)!);
+      return;
+    }
+
+    let cancelled = false;
+    const city = destination.split(',')[0].trim();
+    const today = todayDate();
+
+    // Use local-midnight comparison to avoid UTC off-by-one
+    const todayMs  = localMidnight(today).getTime();
+    const targetMs = localMidnight(targetDate).getTime();
+    const daysFromToday = Math.round((targetMs - todayMs) / 86400000);
+    const isPast       = daysFromToday < 0;
+    const beyondForecast = daysFromToday > FORECAST_HORIZON_DAYS;
+
+    if (beyondForecast) {
+      // No forecast data available this far out — don't attempt a fetch
+      weatherCache.set(cacheKey, null);
+      setWeather(null);
+      return;
+    }
+
+    fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`)
+      .then(r => r.json())
+      .then(geo => {
+        if (cancelled || !geo.results?.length) return null;
+        const { latitude, longitude } = geo.results[0];
+
+        if (isPast) {
+          return fetch(
+            `https://archive-api.open-meteo.com/v1/archive` +
+            `?latitude=${latitude}&longitude=${longitude}` +
+            `&start_date=${targetDate}&end_date=${targetDate}` +
+            `&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,weathercode` +
+            `&timezone=auto`
+          );
+        }
+
+        return fetch(
+          `https://api.open-meteo.com/v1/forecast` +
+          `?latitude=${latitude}&longitude=${longitude}` +
+          `&start_date=${targetDate}&end_date=${targetDate}` +
+          `&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,weathercode` +
+          `&timezone=auto`
+        );
+      })
+      .then(r => (r ? r.json() : null))
+      .then(data => {
+        if (cancelled || !data?.daily) return;
+        const d = data.daily;
+        if (!d.time?.length) return;
+
+        const code: number  = d.weathercode[0];
+        const max: number   = d.temperature_2m_max[0];
+        const min: number   = d.temperature_2m_min[0];
+        const feels: number = d.apparent_temperature_max?.[0] ?? max;
+
+        const result: WeatherData = {
+          temp:       Math.round((max + min) / 2),
+          feels:      Math.round(feels),
+          icon:       WMO_ICONS[code] ?? '🌡️',
+          desc:       WMO_DESC[code]  ?? 'Unknown',
+          isForecast: !isPast,
+        };
+        weatherCache.set(cacheKey, result);
+        setWeather(result);
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  // Re-run whenever the specific date or destination changes
+  }, [cacheKey, destination, targetDate]);
+
+  return weather;
+}
+
+// ─── Category icons ───────────────────────────────────────────────────────────
+
+const CATEGORY_ICONS: Record<string, React.ReactNode> = {
+  flight: (
+    <svg viewBox="0 0 24 24" fill="white" width="16" height="16">
+      <path d="M21 16v-2l-8-5V3.5A1.5 1.5 0 0 0 11.5 2 1.5 1.5 0 0 0 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/>
+    </svg>
+  ),
+  transport: (
+    <svg viewBox="0 0 24 24" fill="white" width="16" height="16">
+      <path d="M12 2c-4 0-8 .5-8 4v9.5A2.5 2.5 0 0 0 6.5 18l-1.5 1.5v.5h2l2-2h6l2 2h2v-.5L17.5 18a2.5 2.5 0 0 0 2.5-2.5V6c0-3.5-4-4-8-4zm-3.5 13a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm7 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zM4 10V6h16v4H4z"/>
+    </svg>
+  ),
+  hotel: (
+    <svg viewBox="0 0 24 24" fill="white" width="16" height="16">
+      <path d="M7 13c1.66 0 3-1.34 3-3S8.66 7 7 7s-3 1.34-3 3 1.34 3 3 3zm12-6h-8v7H3V5H1v15h2v-3h18v3h2v-9a4 4 0 0 0-4-4z"/>
+    </svg>
+  ),
+  sightseeing: (
+    <svg viewBox="0 0 24 24" fill="white" width="16" height="16">
+      <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 0 1 9.5 9 2.5 2.5 0 0 1 12 6.5 2.5 2.5 0 0 1 14.5 9a2.5 2.5 0 0 1-2.5 2.5z"/>
+    </svg>
+  ),
+  food: (
+    <svg viewBox="0 0 24 24" fill="white" width="16" height="16">
+      <path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z"/>
+    </svg>
+  ),
+  cafe: (
+    <svg viewBox="0 0 24 24" fill="white" width="16" height="16">
+      <path d="M20 3H4v10c0 2.21 1.79 4 4 4h6c2.21 0 4-1.79 4-4v-3h2c1.11 0 2-.89 2-2V5a2 2 0 0 0-2-2zm0 5h-2V5h2v3zM4 19h16v2H4z"/>
+    </svg>
+  ),
+  shopping: (
+    <svg viewBox="0 0 24 24" fill="white" width="16" height="16">
+      <path d="M19 6h-2a5 5 0 0 0-10 0H5a2 2 0 0 0-2 2l-1 13h20L21 8a2 2 0 0 0-2-2zm-7-3a3 3 0 0 1 3 3H9a3 3 0 0 1 3-3zm0 10a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/>
+    </svg>
+  ),
+  entertainment: (
+    <svg viewBox="0 0 24 24" fill="white" width="16" height="16">
+      <path d="M18 3v2h-2V3H8v2H6V3H4v18h2v-2h2v2h8v-2h2v2h2V3h-2zM8 17H6v-2h2v2zm0-4H6v-2h2v2zm0-4H6V7h2v2zm10 8h-2v-2h2v2zm0-4h-2v-2h2v2zm0-4h-2V7h2v2z"/>
+    </svg>
+  ),
+  photo: (
+    <svg viewBox="0 0 24 24" fill="white" width="16" height="16">
+      <path d="M12 15.2A3.2 3.2 0 0 1 8.8 12 3.2 3.2 0 0 1 12 8.8 3.2 3.2 0 0 1 15.2 12 3.2 3.2 0 0 1 12 15.2zM9 2L7.17 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3.17L15 2H9z"/>
+    </svg>
+  ),
+  custom: (
+    <svg viewBox="0 0 24 24" fill="white" width="16" height="16">
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+    </svg>
+  ),
+};
+
+// ─── Category system ──────────────────────────────────────────────────────────
 
 type CategoryKey =
   | 'sightseeing' | 'food' | 'cafe' | 'shopping'
   | 'flight' | 'transport' | 'hotel' | 'entertainment'
   | 'photo' | 'custom';
 
-const CATEGORIES: Record<CategoryKey, { emoji: string; label: string; bg: string; text: string; badge: string }> = {
-  sightseeing:   { emoji: '🗺️',  label: 'Sightseeing',   bg: 'bg-sky-50',      text: 'text-sky-600',      badge: 'bg-sky-100 text-sky-700' },
-  food:          { emoji: '🍽️',  label: 'Food',          bg: 'bg-orange-50',   text: 'text-orange-500',   badge: 'bg-orange-100 text-orange-700' },
-  cafe:          { emoji: '☕',   label: 'Cafe',          bg: 'bg-purple-50',   text: 'text-purple-500',   badge: 'bg-purple-100 text-purple-700' },
-  shopping:      { emoji: '🛍️',  label: 'Shopping',      bg: 'bg-pink-50',     text: 'text-pink-500',     badge: 'bg-pink-100 text-pink-700' },
-  flight:        { emoji: '✈️',  label: 'Flight',        bg: 'bg-blue-50',     text: 'text-blue-500',     badge: 'bg-blue-100 text-blue-700' },
-  transport:     { emoji: '🚆',  label: 'Transport',     bg: 'bg-teal-50',     text: 'text-teal-500',     badge: 'bg-teal-100 text-teal-700' },
-  hotel:         { emoji: '🏨',  label: 'Hotel',         bg: 'bg-violet-50',   text: 'text-violet-500',   badge: 'bg-violet-100 text-violet-700' },
-  entertainment: { emoji: '🎡',  label: 'Entertainment', bg: 'bg-rose-50',     text: 'text-rose-500',     badge: 'bg-rose-100 text-rose-700' },
-  photo:         { emoji: '📸',  label: 'Photo Spot',    bg: 'bg-fuchsia-50',  text: 'text-fuchsia-500',  badge: 'bg-fuchsia-100 text-fuchsia-700' },
-  custom:        { emoji: '🌸',  label: 'Custom',        bg: 'bg-lime-50',     text: 'text-lime-600',     badge: 'bg-lime-100 text-lime-700' },
+const CATEGORIES: Record<CategoryKey, { emoji: string; label: string; bg: string; text: string; badge: string; nodeGradient: string }> = {
+  sightseeing:   { emoji: '🗺️', label: 'Sightseeing',   bg: 'bg-sky-50',     text: 'text-sky-600',     badge: 'bg-sky-100 text-sky-700',        nodeGradient: 'linear-gradient(135deg,#38bdf8,#0284c7)' },
+  food:          { emoji: '🍽️', label: 'Food',          bg: 'bg-orange-50',  text: 'text-orange-500',  badge: 'bg-orange-100 text-orange-700',   nodeGradient: 'linear-gradient(135deg,#fb923c,#ea580c)' },
+  cafe:          { emoji: '☕',  label: 'Cafe',          bg: 'bg-purple-50',  text: 'text-purple-500',  badge: 'bg-purple-100 text-purple-700',   nodeGradient: 'linear-gradient(135deg,#c084fc,#9333ea)' },
+  shopping:      { emoji: '🛍️', label: 'Shopping',      bg: 'bg-pink-50',    text: 'text-pink-500',    badge: 'bg-pink-100 text-pink-700',       nodeGradient: 'linear-gradient(135deg,#f472b6,#db2777)' },
+  flight:        { emoji: '✈️', label: 'Flight',        bg: 'bg-blue-50',    text: 'text-blue-500',    badge: 'bg-blue-100 text-blue-700',       nodeGradient: 'linear-gradient(135deg,#7C5CFF,#8B5CF6)' },
+  transport:     { emoji: '🚆', label: 'Transport',     bg: 'bg-teal-50',    text: 'text-teal-500',    badge: 'bg-teal-100 text-teal-700',       nodeGradient: 'linear-gradient(135deg,#2dd4bf,#0d9488)' },
+  hotel:         { emoji: '🏨', label: 'Hotel',         bg: 'bg-violet-50',  text: 'text-violet-500',  badge: 'bg-violet-100 text-violet-700',   nodeGradient: 'linear-gradient(135deg,#a78bfa,#7c3aed)' },
+  entertainment: { emoji: '🎡', label: 'Entertainment', bg: 'bg-rose-50',    text: 'text-rose-500',    badge: 'bg-rose-100 text-rose-700',       nodeGradient: 'linear-gradient(135deg,#fb7185,#e11d48)' },
+  photo:         { emoji: '📸', label: 'Photo Spot',    bg: 'bg-fuchsia-50', text: 'text-fuchsia-500', badge: 'bg-fuchsia-100 text-fuchsia-700', nodeGradient: 'linear-gradient(135deg,#e879f9,#c026d3)' },
+  custom:        { emoji: '🌸', label: 'Custom',        bg: 'bg-lime-50',    text: 'text-lime-600',    badge: 'bg-lime-100 text-lime-700',       nodeGradient: 'linear-gradient(135deg,#a3e635,#65a30d)' },
 };
 
 type ActivityStatus = 'upcoming' | 'inprogress' | 'completed';
 
-const STATUS_STYLES: Record<ActivityStatus, { label: string; pill: string; dot: string }> = {
-  upcoming:   { label: '✨ Upcoming',    pill: 'bg-violet-100 text-violet-600',  dot: 'bg-violet-400' },
-  inprogress: { label: '🟣 In Progress', pill: 'bg-pink-100 text-pink-600',      dot: 'bg-pink-400 animate-pulse' },
-  completed:  { label: '✓ Completed',    pill: 'bg-emerald-100 text-emerald-600', dot: 'bg-emerald-400' },
+const STATUS_STYLES: Record<ActivityStatus, { label: string; pill: string }> = {
+  upcoming:   { label: '✨ Upcoming',    pill: 'bg-violet-100 text-violet-600'   },
+  inprogress: { label: '🟣 In Progress', pill: 'bg-pink-100 text-pink-600'       },
+  completed:  { label: '✓ Completed',    pill: 'bg-emerald-100 text-emerald-600' },
 };
 
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WEEKDAY_LONG  = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-// ─── Extended activity type ────────────────────────────────────────────────────
+// ─── Extended activity type ───────────────────────────────────────────────────
 
 type RichActivity = ItineraryActivity & {
   timeEnd?:  string;
@@ -48,9 +214,17 @@ type RichActivity = ItineraryActivity & {
   status?:   ActivityStatus;
   notes?:    string;
   location?: string;
+  dateEnd?:  string;
+  isPinned?: boolean;
 };
 
-// ─── Time helpers ──────────────────────────────────────────────────────────────
+// ─── Time / date helpers ──────────────────────────────────────────────────────
+
+// Parse "YYYY-MM-DD" as local midnight to avoid UTC off-by-one date shifts
+function localMidnight(dateStr: string): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
 
 function to12h(t: string): string {
   const [hStr, mStr] = t.split(':');
@@ -80,14 +254,37 @@ function nowTime() {
   return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`;
 }
 
-function todayDate() { return new Date().toISOString().slice(0, 10); }
-function isDayPast(d: string) { return d < todayDate(); }
+// Returns today as "YYYY-MM-DD" in local time (not UTC)
+function todayDate(): string {
+  const n = new Date();
+  const y = n.getFullYear();
+  const m = String(n.getMonth() + 1).padStart(2, '0');
+  const d = String(n.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+// Compare date strings safely using local midnight
+function isDayPast(d: string): boolean {
+  return localMidnight(d) < localMidnight(todayDate());
+}
+
+function addDays(dateStr: string, n: number): string {
+  const d = localMidnight(dateStr);
+  d.setDate(d.getDate() + n);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 function detectStatus(activity: RichActivity, dayDate: string): ActivityStatus {
-  if (activity.status === 'completed') return 'completed';
   const today = todayDate();
+  // Past days always auto-complete — ignore manual overrides so time-based logic rules
   if (dayDate < today) return 'completed';
+  // For today/future, respect manual overrides
+  if (activity.status === 'completed' || activity.status === 'upcoming') return activity.status;
   if (dayDate > today) return 'upcoming';
+  // Today: check current time
   const now = nowTime();
   if (activity.time <= now && (!activity.timeEnd || activity.timeEnd >= now)) return 'inprogress';
   if ((activity.timeEnd ?? activity.time) < now) return 'completed';
@@ -106,81 +303,160 @@ function hasConflict(
   return null;
 }
 
-// ─── Empty day builder ─────────────────────────────────────────────────────────
+function getConflictingActivity(
+  activity: RichActivity,
+  allActivities: RichActivity[]
+): RichActivity | null {
+  const aEnd = activity.timeEnd ?? activity.time;
+  for (const other of allActivities) {
+    if (other.id === activity.id) continue;
+    const otherEnd = other.timeEnd ?? other.time;
+    if (activity.time < otherEnd && aEnd > other.time) return other;
+  }
+  return null;
+}
+
+// ─── Pinned activity builders ─────────────────────────────────────────────────
+
+function buildDepartureActivity(destination: string): RichActivity {
+  return {
+    id: '__departure__', time: '08:00', timeEnd: '10:00',
+    title: `Departure to ${destination}`, category: 'flight',
+    type: 'flight' as unknown as ItineraryActivity['type'],
+    isPinned: true,
+    notes: 'Edit to add flight details, departure time, and airport info.',
+  };
+}
+
+function buildReturnActivity(destination: string): RichActivity {
+  return {
+    id: '__return__', time: '10:00', timeEnd: '12:00',
+    title: `Return from ${destination}`, category: 'flight',
+    type: 'flight' as unknown as ItineraryActivity['type'],
+    isPinned: true,
+    notes: 'Edit to add your return flight details and airport info.',
+  };
+}
+
+function injectPinnedActivities(days: ItineraryDay[], destination: string): ItineraryDay[] {
+  if (!days.length) return days;
+  return days.map((d, i) => {
+    let acts = [...d.activities] as RichActivity[];
+    if (i === 0 && !acts.find(a => a.id === '__departure__')) {
+      acts = [buildDepartureActivity(destination), ...acts];
+    }
+    if (i === days.length - 1 && !acts.find(a => a.id === '__return__')) {
+      acts = [...acts, buildReturnActivity(destination)];
+    }
+    return { ...d, activities: acts };
+  });
+}
 
 function buildEmptyDays(startDate: string, endDate: string): ItineraryDay[] {
   const days: ItineraryDay[] = [];
-  const start = new Date(startDate);
-  const end   = new Date(endDate);
   const count = Math.max(1, tripDays(startDate, endDate));
   for (let i = 0; i < count; i++) {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
-    if (d > end && i > 0) break;
-    days.push({ date: d.toISOString().slice(0, 10), activities: [] });
+    const date = addDays(startDate, i);
+    if (date > endDate && i > 0) break;
+    days.push({ date, activities: [] });
   }
   return days;
 }
 
-// ─── Form state ────────────────────────────────────────────────────────────────
+// ─── Form state ───────────────────────────────────────────────────────────────
 
 type FormState = {
-  timeStart: string;
-  timeEnd:   string;
-  title:     string;
-  location:  string;
-  category:  CategoryKey;
-  notes:     string;
+  timeStart: string; timeEnd: string; title: string;
+  location: string; category: CategoryKey; notes: string;
+  multiDay: boolean; dateEnd: string;
 };
 
 const BLANK_FORM: FormState = {
   timeStart: '09:00', timeEnd: '10:00', title: '',
   location: '', category: 'sightseeing', notes: '',
+  multiDay: false, dateEnd: '',
 };
 
-// ─── Day Progress bar ──────────────────────────────────────────────────────────
+// ─── Day Progress + Weather ───────────────────────────────────────────────────
 
-function DayProgress({ total, completed }: { total: number; completed: number }) {
-  const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
+function DayProgress({
+  total, completed, destination, date,
+}: {
+  total: number; completed: number; destination: string; date: string;
+}) {
+  const pct     = total === 0 ? 0 : Math.round((completed / total) * 100);
+  // KEY FIX: pass both destination AND date so the hook re-runs for each day
+  const weather = useWeather(destination, date);
+
+  const today   = todayDate();
+  const daysOut = Math.round(
+    (localMidnight(date).getTime() - localMidnight(today).getTime()) / 86400000
+  );
+  const tooFarOut = daysOut > FORECAST_HORIZON_DAYS;
+
   return (
     <motion.div
+      // KEY FIX: key on date forces full remount when day changes,
+      // so useWeather initialises fresh state from cache for the new date
+      key={date}
       initial={{ opacity: 0, y: -12 }}
       animate={{ opacity: 1, y: 0 }}
       className="mx-4 sm:mx-6 mb-4 rounded-3xl overflow-hidden"
-      style={{ background: 'linear-gradient(135deg, #7C5CFF 0%, #8B5CF6 100%)' }}
+      style={{ background: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 50%, #ec4899 100%)' }}
     >
-      {/* Decorative blobs */}
       <div className="relative p-4 sm:p-5 overflow-hidden">
-        <div className="absolute -top-8 -right-8 w-28 h-28 rounded-full bg-white/10" />
-        <div className="absolute -bottom-6 left-8 w-16 h-16 rounded-full bg-white/[0.07]" />
-
+        <div className="absolute -top-10 -right-10 w-36 h-36 rounded-full bg-white/10 pointer-events-none" />
+        <div className="absolute -bottom-8 left-6 w-20 h-20 rounded-full bg-white/[0.06] pointer-events-none" />
         <div className="relative flex items-start justify-between mb-3">
           <div>
-            <p className="text-white/70 text-[11px] font-semibold mb-0.5">Day progress</p>
+            <p className="text-white/70 text-[11px] font-semibold mb-0.5 uppercase tracking-wide">Daily Progress</p>
             <p className="text-white text-xl font-black">{completed} / {total}</p>
-            <p className="text-white/60 text-[11px]">activities completed</p>
+            <p className="text-white/60 text-[11px]">
+              {pct === 100 ? "You've completed today's plan! 🎉" : 'activities completed'}
+            </p>
           </div>
-          <div className="text-right">
-            <span className="text-white text-3xl font-black">{pct}%</span>
+          <div className="flex flex-col items-end gap-0.5">
+            {tooFarOut ? (
+              <p className="text-white/50 text-[10px] text-right max-w-[110px] leading-tight">
+                Forecast not yet available
+              </p>
+            ) : weather ? (
+              <>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-2xl leading-none">{weather.icon}</span>
+                  <span className="text-white text-2xl font-black leading-none">{weather.temp}°</span>
+                </div>
+                <p className="text-white/70 text-[10px] font-semibold text-right leading-tight">{weather.desc}</p>
+                <p className="text-white/50 text-[9px] text-right">
+                  {weather.isForecast ? 'Feels' : 'Felt'} {weather.feels}°C
+                </p>
+              </>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white/80 animate-spin" />
+                <span className="text-white/50 text-[10px]">Weather…</span>
+              </div>
+            )}
           </div>
         </div>
-
-        {/* Progress bar */}
-        <div className="h-2 rounded-full bg-white/25 overflow-hidden">
+        <div className="h-2.5 rounded-full bg-white/20 overflow-hidden">
           <motion.div
             className="h-full rounded-full"
-            style={{ background: 'linear-gradient(90deg, #FFD6C2, #FFB7E1)' }}
+            style={{ background: 'linear-gradient(90deg,#ffd6c2,#ffb7e1)' }}
             initial={{ width: 0 }}
             animate={{ width: `${pct}%` }}
-            transition={{ duration: 0.8, ease: [0.22, 0.68, 0, 1.2] }}
+            transition={{ duration: 0.9, ease: [0.22, 0.68, 0, 1.2] }}
           />
         </div>
+        <p className="relative text-white/40 text-[10px] font-semibold mt-2 uppercase tracking-wider">
+          📍 {destination}
+        </p>
       </div>
     </motion.div>
   );
 }
 
-// ─── Category badge ────────────────────────────────────────────────────────────
+// ─── Category badge ───────────────────────────────────────────────────────────
 
 function CategoryBadge({ cat }: { cat: CategoryKey }) {
   const c = CATEGORIES[cat];
@@ -191,91 +467,292 @@ function CategoryBadge({ cat }: { cat: CategoryKey }) {
   );
 }
 
-// ─── Activity card ─────────────────────────────────────────────────────────────
+// ─── Timeline Node ────────────────────────────────────────────────────────────
 
-function ActivityCard({
-  activity,
-  dayDate,
-  isDayInPast,
-  onEdit,
-  onDelete,
-  onToggle,
-}: {
-  activity:     RichActivity;
-  dayDate:      string;
-  isDayInPast:  boolean;
-  onEdit:       () => void;
-  onDelete:     () => void;
-  onToggle:     () => void;
-}) {
-  const cat    = CATEGORIES[activity.category ?? 'custom'];
-  const status = detectStatus(activity, dayDate);
-  const st     = STATUS_STYLES[status];
-  const isDone = status === 'completed';
-
-  // Timeline node color
-  const nodeStyle =
-    status === 'completed'  ? 'bg-gradient-to-br from-emerald-300 to-emerald-500 shadow-emerald-200' :
-    status === 'inprogress' ? 'bg-gradient-to-br from-pink-300 to-pink-500 shadow-pink-200 animate-pulse' :
-                              'bg-gradient-to-br from-violet-400 to-violet-600 shadow-violet-200';
+function TimelineNode({ activity, status }: { activity: RichActivity; status: ActivityStatus }) {
+  const catKey = activity.category ?? 'custom';
+  const icon   = CATEGORY_ICONS[catKey] ?? CATEGORY_ICONS['custom'];
 
   return (
     <motion.div
-      className="relative flex gap-3 items-start"
-      initial={{ opacity: 0, x: -16, scale: 0.97 }}
-      animate={{ opacity: 1, x: 0, scale: 1 }}
-      exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-      transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+      className="flex-shrink-0 flex items-center justify-center rounded-full"
+      style={{
+        width: 36,
+        height: 36,
+        background: '#7C5CFF',
+        border: '3px solid #f3f0ff',
+        boxShadow:
+          status === 'inprogress'
+            ? '0 0 0 3px rgba(124,92,255,0.28), 0 4px 14px rgba(124,92,255,0.32)'
+            : status === 'completed'
+            ? '0 0 0 3px rgba(52,211,153,0.30), 0 3px 10px rgba(0,0,0,0.10)'
+            : '0 0 0 3px rgba(124,92,255,0.14), 0 3px 10px rgba(124,92,255,0.18)',
+        zIndex: 2,
+      }}
+      animate={status === 'inprogress' ? { scale: [1, 1.1, 1] } : { scale: 1 }}
+      transition={status === 'inprogress' ? { repeat: Infinity, duration: 1.8, ease: 'easeInOut' } : {}}
+    >
+      {status === 'completed'
+        ? <svg viewBox="0 0 24 24" fill="white" width="15" height="15"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+        : icon
+      }
+    </motion.div>
+  );
+}
+
+// ─── Long-press context menu ──────────────────────────────────────────────────
+
+function ContextMenu({
+  x, y, isDone, isPinned, onMarkDone, onEdit, onDelete, onClose,
+}: {
+  x: number; y: number; isDone: boolean; isPinned: boolean;
+  onMarkDone: () => void; onEdit: () => void; onDelete: () => void; onClose: () => void;
+}) {
+  const menuW = 200;
+  const menuH = isPinned ? 100 : 145;
+  const clampedX = Math.min(x, window.innerWidth - menuW - 12);
+  const clampedY = Math.min(y, window.innerHeight - menuH - 12);
+
+  return (
+    <>
+      <motion.div
+        className="fixed inset-0 z-[70]"
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        onClick={onClose}
+      />
+      <motion.div
+        className="fixed z-[80] bg-white rounded-2xl shadow-2xl shadow-black/20 overflow-hidden"
+        style={{ left: clampedX, top: clampedY, width: menuW, border: '0.5px solid rgba(124,92,255,0.15)' }}
+        initial={{ opacity: 0, scale: 0.85, y: -8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.85, y: -8 }}
+        transition={{ type: 'spring', stiffness: 400, damping: 28 }}
+      >
+        <button
+          onClick={() => { onMarkDone(); onClose(); }}
+          className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-violet-50 transition-colors"
+        >
+          <CheckCircle2 size={16} className={isDone ? 'text-slate-300' : 'text-emerald-500'} />
+          {isDone ? 'Mark as undone' : 'Mark as done'}
+        </button>
+        <div className="h-px bg-slate-100 mx-3" />
+        <button
+          onClick={() => { onEdit(); onClose(); }}
+          className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-violet-50 transition-colors"
+        >
+          <Pencil size={16} className="text-violet-500" />
+          Edit activity
+        </button>
+        {!isPinned && (
+          <>
+            <div className="h-px bg-slate-100 mx-3" />
+            <button
+              onClick={() => { onDelete(); onClose(); }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-rose-500 hover:bg-rose-50 transition-colors"
+            >
+              <Trash2 size={16} />
+              Delete activity
+            </button>
+          </>
+        )}
+      </motion.div>
+    </>
+  );
+}
+
+// ─── Swipeable Activity Card ──────────────────────────────────────────────────
+
+const SWIPE_THRESHOLD = 80;
+
+function ActivityCard({
+  activity, dayDate, isDayInPast, onEdit, onDelete, onToggle, allActivities,
+}: {
+  activity:      RichActivity;
+  dayDate:       string;
+  isDayInPast:   boolean;
+  onEdit:        () => void;
+  onDelete:      () => void;
+  onToggle:      () => void;
+  allActivities: RichActivity[];
+}) {
+  const cat        = CATEGORIES[activity.category ?? 'custom'];
+  const status     = detectStatus(activity, dayDate);
+  const st         = STATUS_STYLES[status];
+  const isDone     = status === 'completed';
+  const isMultiDay = !!activity.dateEnd && activity.dateEnd !== dayDate;
+  const isPinned   = !!activity.isPinned;
+
+  const conflictWith = getConflictingActivity(activity, allActivities);
+  const hasOverlap   = conflictWith !== null;
+
+  const x            = useMotionValue(0);
+  const controls     = useAnimation();
+  const swipeBg      = useTransform(x, [0, SWIPE_THRESHOLD], ['rgba(124,92,255,0)', 'rgba(52,211,153,0.18)']);
+  const checkOpacity = useTransform(x, [0, SWIPE_THRESHOLD * 0.5, SWIPE_THRESHOLD], [0, 0.4, 1]);
+  const swipeLocked  = useRef(false);
+
+  const shakeControls = useAnimation();
+  const hasShaken     = useRef(false);
+
+  useEffect(() => {
+    if (hasOverlap && !hasShaken.current) {
+      hasShaken.current = true;
+      const timer = setTimeout(() => {
+        shakeControls.start({
+          x: [0, -8, 8, -6, 6, -3, 3, 0],
+          transition: { duration: 0.55, ease: 'easeInOut' },
+        });
+      }, 400);
+      return () => clearTimeout(timer);
+    }
+  }, [hasOverlap, shakeControls]);
+
+  useEffect(() => {
+    if (!hasOverlap) hasShaken.current = false;
+  }, [hasOverlap]);
+
+  const longPressTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const isDragging = useRef(false);
+
+  const startLongPress = (e: React.TouchEvent | React.MouseEvent) => {
+    isDragging.current = false;
+    longPressTimer.current = setTimeout(() => {
+      if (isDragging.current) return;
+      if ('vibrate' in navigator) navigator.vibrate(30);
+      const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+      const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+      setMenuPos({ x: clientX, y: clientY });
+    }, 500);
+  };
+
+  const cancelLongPress = () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  };
+
+  const onDragStart = () => {
+    isDragging.current = true;
+    cancelLongPress();
+  };
+
+  const onDragEnd = async (_: unknown, info: { offset: { x: number } }) => {
+    if (info.offset.x >= SWIPE_THRESHOLD && !swipeLocked.current) {
+      swipeLocked.current = true;
+      await controls.start({ x: 120, transition: { duration: 0.15 } });
+      onToggle();
+      await controls.start({ x: 0, transition: { type: 'spring', stiffness: 500, damping: 30 } });
+      swipeLocked.current = false;
+    } else {
+      controls.start({ x: 0, transition: { type: 'spring', stiffness: 500, damping: 30 } });
+    }
+  };
+
+  return (
+    <motion.div
+      className="relative"
+      animate={shakeControls}
       layout
     >
       {/* Timeline node */}
-      <div className="flex flex-col items-center pt-1 flex-shrink-0" style={{ width: 22 }}>
-        <motion.div
-          className={`w-[22px] h-[22px] rounded-full flex items-center justify-center text-white text-[10px] font-black shadow-md ${nodeStyle}`}
-          whileTap={{ scale: 0.85 }}
-        >
-          {isDone ? '✓' : status === 'inprogress' ? '▶' : ''}
-        </motion.div>
+      <div
+        className="absolute flex items-center justify-center"
+        style={{ left: 0, top: 12, width: 36, zIndex: 2 }}
+      >
+        <TimelineNode activity={activity} status={status} />
       </div>
 
-      {/* Card */}
+      {/* Swipe-to-done background */}
       <motion.div
-        className={`flex-1 rounded-3xl border p-3.5 sm:p-4 transition-all duration-300 ${
-          isDone
+        className="absolute inset-y-0 rounded-3xl overflow-hidden pointer-events-none"
+        style={{ left: 48, right: 0, background: swipeBg }}
+      >
+        <motion.div
+          className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center gap-2"
+          style={{ opacity: checkOpacity }}
+        >
+          <CheckCircle2 size={20} className="text-emerald-500" />
+          <span className="text-xs font-black text-emerald-600">{isDone ? 'Undo' : 'Done!'}</span>
+        </motion.div>
+      </motion.div>
+
+      {/* Draggable card */}
+      <motion.div
+        drag={isDayInPast ? false : 'x'}
+        dragConstraints={{ left: 0, right: 140 }}
+        dragElastic={{ left: 0, right: 0.3 }}
+        style={{ x }}
+        animate={controls}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onTouchStart={startLongPress}
+        onTouchEnd={cancelLongPress}
+        onTouchMove={cancelLongPress}
+        onMouseDown={startLongPress}
+        onMouseUp={cancelLongPress}
+        onMouseLeave={cancelLongPress}
+        className={`ml-[48px] min-w-0 rounded-3xl border p-3.5 sm:p-4 transition-all duration-300 overflow-hidden cursor-grab active:cursor-grabbing select-none ${
+          hasOverlap
+            ? 'bg-white border-rose-200 shadow-[0_4px_20px_rgba(239,68,68,0.15)]'
+            : isDone
             ? 'bg-white/60 border-slate-100 opacity-60'
+            : isPinned
+            ? 'bg-white border-violet-100 shadow-[0_4px_20px_rgba(124,92,255,0.10)]'
             : 'bg-white border-slate-100 shadow-[0_4px_20px_rgba(124,92,255,0.07)]'
         }`}
-        whileHover={{ y: -2, boxShadow: '0 8px 28px rgba(124,92,255,0.13)' }}
-        whileTap={{ scale: 0.985 }}
+        whileHover={{ y: isDayInPast ? 0 : -2, boxShadow: hasOverlap ? '0 8px 28px rgba(239,68,68,0.20)' : '0 8px 28px rgba(124,92,255,0.13)' }}
       >
+        {hasOverlap && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className="flex items-center gap-2 mb-2.5 px-2.5 py-1.5 rounded-xl"
+            style={{ background: 'rgba(254,226,226,0.80)' }}
+          >
+            <AlertTriangle size={12} className="text-rose-500 flex-shrink-0" />
+            <p className="text-[10px] font-bold text-rose-600 leading-tight">
+              Time clash with <span className="font-black">"{conflictWith?.title}"</span>
+            </p>
+          </motion.div>
+        )}
+
+        {isPinned && (
+          <div className="flex items-center gap-1 mb-2">
+            <span className="text-[10px] font-black text-violet-500 bg-violet-50 px-2 py-0.5 rounded-full border border-violet-100">
+              📌 Auto-scheduled · long-press to edit
+            </span>
+          </div>
+        )}
+
         <div className="flex items-start gap-3">
-          {/* Category icon */}
-          <div className={`w-9 h-9 rounded-2xl flex items-center justify-center text-base flex-shrink-0 ${cat.bg}`}>
+          <div className={`w-8 h-8 rounded-2xl flex items-center justify-center text-sm flex-shrink-0 ${cat.bg}`}>
             {cat.emoji}
           </div>
-
           <div className="min-w-0 flex-1">
-            {/* Time */}
-            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 mb-0.5">
-              <Clock size={11} />
-              {fmtTimeRange(activity.time, activity.timeEnd)}
-            </div>
-            {/* Title */}
-            <h3 className={`text-sm font-black text-slate-900 truncate ${isDone ? 'line-through text-slate-400' : ''}`}>
-              {activity.title}
-            </h3>
-            {/* Location */}
-            {activity.location && (
-              <div className="flex items-center gap-1 text-xs text-slate-400 mt-0.5">
-                <MapPin size={11} className="flex-shrink-0" />
-                <span className="truncate">{activity.location}</span>
+            {isMultiDay && (
+              <div className="flex items-center gap-1.5 text-[10px] font-black text-violet-500 mb-1 min-w-0">
+                <CalendarIcon size={10} className="flex-shrink-0" />
+                <span className="truncate">{fmtDate(dayDate)} – {fmtDate(activity.dateEnd as string)}</span>
               </div>
             )}
-            {/* Notes */}
-            {activity.notes && (
-              <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">{activity.notes}</p>
+            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 mb-0.5">
+              <Clock size={10} className="flex-shrink-0" />
+              {fmtTimeRange(activity.time, activity.timeEnd)}
+            </div>
+            <h3
+              className={`text-sm font-black text-slate-900 break-words leading-snug ${isDone ? 'line-through text-slate-400' : ''}`}
+              style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+            >
+              {activity.title}
+            </h3>
+            {activity.location && (
+              <div className="flex items-center gap-1 text-xs text-slate-400 mt-0.5 min-w-0">
+                <MapPin size={10} className="flex-shrink-0" />
+                <span className="truncate min-w-0">{activity.location}</span>
+              </div>
             )}
-            {/* Status + badge row */}
+            {activity.notes && (
+              <p className="text-xs text-slate-400 mt-1.5 leading-relaxed break-words">{activity.notes}</p>
+            )}
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${st.pill}`}>
                 {st.label}
@@ -283,47 +760,28 @@ function ActivityCard({
               <CategoryBadge cat={activity.category ?? 'custom'} />
             </div>
           </div>
-
-          {/* Actions */}
-          <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-            {/* Check toggle */}
-            <motion.button
-              onClick={onToggle}
-              whileTap={{ scale: 0.8 }}
-              className="focus:outline-none"
-              aria-label={isDone ? 'Mark incomplete' : 'Mark complete'}
-            >
-              {isDone
-                ? <CheckCircle2 size={20} className="text-emerald-400" />
-                : <Circle size={20} className="text-slate-200 hover:text-violet-300 transition-colors" />
-              }
-            </motion.button>
-            {!isDayInPast && (
-              <div className="flex gap-1">
-                <button
-                  onClick={onEdit}
-                  aria-label="Edit activity"
-                  className="w-7 h-7 flex items-center justify-center rounded-xl text-slate-300 hover:text-violet-500 hover:bg-violet-50 transition-colors"
-                >
-                  <Pencil size={12} />
-                </button>
-                <button
-                  onClick={onDelete}
-                  aria-label="Delete activity"
-                  className="w-7 h-7 flex items-center justify-center rounded-xl text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition-colors"
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            )}
-          </div>
         </div>
       </motion.div>
+
+      <AnimatePresence>
+        {menuPos && (
+          <ContextMenu
+            x={menuPos.x}
+            y={menuPos.y}
+            isDone={isDone}
+            isPinned={isPinned}
+            onMarkDone={onToggle}
+            onEdit={onEdit}
+            onDelete={onDelete}
+            onClose={() => setMenuPos(null)}
+          />
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
 
-// ─── Day notes ─────────────────────────────────────────────────────────────────
+// ─── Day notes ────────────────────────────────────────────────────────────────
 
 function DayNotes({ notes, onChange }: { notes: string; onChange: (v: string) => void }) {
   return (
@@ -348,7 +806,7 @@ function DayNotes({ notes, onChange }: { notes: string; onChange: (v: string) =>
   );
 }
 
-// ─── Daily summary ─────────────────────────────────────────────────────────────
+// ─── Daily summary ────────────────────────────────────────────────────────────
 
 function DailySummary({ total, completed }: { total: number; completed: number }) {
   return (
@@ -364,8 +822,8 @@ function DailySummary({ total, completed }: { total: number; completed: number }
       </div>
       <div className="grid grid-cols-2 gap-3">
         {[
-          { label: 'Activities',  value: String(total),      sub: `${completed} done` },
-          { label: 'Remaining',   value: String(total - completed), sub: 'to go' },
+          { label: 'Activities', value: String(total),             sub: `${completed} done` },
+          { label: 'Remaining',  value: String(total - completed), sub: 'to go' },
         ].map(s => (
           <div key={s.label} className="bg-white/70 rounded-2xl p-3">
             <p className="text-[10px] text-slate-400 font-semibold">{s.label}</p>
@@ -378,7 +836,7 @@ function DailySummary({ total, completed }: { total: number; completed: number }
   );
 }
 
-// ─── Empty state ───────────────────────────────────────────────────────────────
+// ─── Empty state ──────────────────────────────────────────────────────────────
 
 function EmptyItinerary({ isPast, onAdd }: { isPast: boolean; onAdd: () => void }) {
   return (
@@ -415,11 +873,9 @@ function EmptyItinerary({ isPast, onAdd }: { isPast: boolean; onAdd: () => void 
   );
 }
 
-// ─── Delete confirm sheet ──────────────────────────────────────────────────────
+// ─── Delete confirm sheet ─────────────────────────────────────────────────────
 
-function DeleteConfirmSheet({
-  title, onConfirm, onCancel,
-}: { title: string; onConfirm: () => void; onCancel: () => void }) {
+function DeleteConfirmSheet({ title, onConfirm, onCancel }: { title: string; onConfirm: () => void; onCancel: () => void }) {
   return (
     <motion.div
       className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 backdrop-blur-sm"
@@ -459,28 +915,15 @@ function DeleteConfirmSheet({
   );
 }
 
-// ─── Activity modal ────────────────────────────────────────────────────────────
+// ─── Activity modal ───────────────────────────────────────────────────────────
 
 function ActivityModal({
-  isEditing,
-  activeDay,
-  dayWeekday,
-  form,
-  setForm,
-  onSave,
-  onClose,
-  conflict,
-  startOptions,
-  endOptions,
+  isEditing, activeDay, dayWeekday, dayDateStr,
+  form, setForm, onSave, onClose, conflict, startOptions, endOptions,
 }: {
-  isEditing:    boolean;
-  activeDay:    number;
-  dayWeekday:   string;
-  form:         FormState;
-  setForm:      React.Dispatch<React.SetStateAction<FormState>>;
-  onSave:       () => void;
-  onClose:      () => void;
-  conflict:     RichActivity | null;
+  isEditing: boolean; activeDay: number; dayWeekday: string; dayDateStr: string;
+  form: FormState; setForm: React.Dispatch<React.SetStateAction<FormState>>;
+  onSave: () => void; onClose: () => void; conflict: RichActivity | null;
   startOptions: { value: string; label: string; disabled: boolean }[];
   endOptions:   { value: string; label: string; disabled: boolean }[];
 }) {
@@ -491,17 +934,14 @@ function ActivityModal({
       onClick={onClose}
     >
       <motion.div
-        role="dialog"
-        aria-modal="true"
+        role="dialog" aria-modal="true"
         aria-label={isEditing ? 'Edit activity' : 'Add activity'}
         className="w-full max-w-screen-md bg-white rounded-t-3xl p-5 sm:p-6 pb-8 max-h-[92vh] overflow-y-auto"
         initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 28, stiffness: 320 }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Drag handle */}
         <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto mb-4" />
-
         <div className="flex items-start justify-between mb-1">
           <div>
             <h2 className="text-lg font-black text-slate-900">
@@ -515,7 +955,6 @@ function ActivityModal({
           </button>
         </div>
 
-        {/* Conflict warning */}
         <AnimatePresence>
           {conflict && (
             <motion.div
@@ -532,7 +971,6 @@ function ActivityModal({
         </AnimatePresence>
 
         <div className="space-y-4 mt-4">
-          {/* Title */}
           <div>
             <label className="text-xs font-bold text-slate-500 mb-1.5 block" htmlFor="act-title">Title</label>
             <input
@@ -544,7 +982,6 @@ function ActivityModal({
             />
           </div>
 
-          {/* Category grid */}
           <div>
             <label className="text-xs font-bold text-slate-500 mb-2 block">Category</label>
             <div className="grid grid-cols-5 gap-2">
@@ -567,7 +1004,6 @@ function ActivityModal({
             </div>
           </div>
 
-          {/* Time range */}
           <div>
             <label className="text-xs font-bold text-slate-500 mb-1.5 block">Time</label>
             <div className="flex items-center gap-2">
@@ -606,7 +1042,56 @@ function ActivityModal({
             </p>
           </div>
 
-          {/* Location */}
+          <div>
+            <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50/70 border border-slate-200">
+              <div className="pr-3">
+                <p className="text-xs font-bold text-slate-600">Spans multiple days</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">e.g. a hotel stay or a flight that lands the next day</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={form.multiDay}
+                onClick={() => setForm(f => {
+                  const turningOn = !f.multiDay;
+                  return { ...f, multiDay: turningOn, dateEnd: turningOn ? addDays(dayDateStr, 1) : dayDateStr };
+                })}
+                className={`w-11 h-6 rounded-full relative flex-shrink-0 transition-colors ${form.multiDay ? 'bg-violet-500' : 'bg-slate-200'}`}
+              >
+                <motion.span
+                  className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow"
+                  animate={{ x: form.multiDay ? 20 : 0 }}
+                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                />
+              </button>
+            </div>
+            <AnimatePresence initial={false}>
+              {form.multiDay && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="pt-3">
+                    <label className="text-xs font-bold text-slate-500 mb-1.5 block" htmlFor="act-date-end">Ends on</label>
+                    <input
+                      id="act-date-end"
+                      type="date"
+                      min={dayDateStr}
+                      value={form.dateEnd || dayDateStr}
+                      onChange={e => setForm(f => ({ ...f, dateEnd: e.target.value }))}
+                      className="w-full px-4 py-3 rounded-2xl border border-slate-200 text-sm font-medium focus:outline-none focus:border-violet-400 bg-slate-50/50 transition-colors"
+                    />
+                    <p className="text-[11px] text-violet-500 font-bold mt-1.5 text-right">
+                      {fmtDate(dayDateStr)} – {fmtDate(form.dateEnd || dayDateStr)}
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
           <div>
             <label className="text-xs font-bold text-slate-500 mb-1.5 block" htmlFor="act-loc">Location (optional)</label>
             <input
@@ -618,7 +1103,6 @@ function ActivityModal({
             />
           </div>
 
-          {/* Notes */}
           <div>
             <label className="text-xs font-bold text-slate-500 mb-1.5 block" htmlFor="act-notes">Notes (optional)</label>
             <textarea
@@ -651,106 +1135,134 @@ function ActivityModal({
 
 function KittenAvatar() {
   return (
-    <svg width="44" height="44" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Cute peeping kitten">
-      {/* Body peeking from bottom */}
-      <ellipse cx="22" cy="38" rx="11" ry="6" fill="#f5c2e0" />
-
-      {/* Head */}
-      <ellipse cx="22" cy="26" rx="11" ry="10" fill="#f9d4ec" />
-
-      {/* Left ear */}
-      <polygon points="12,19 10,10 17,16" fill="#f9d4ec" />
-      {/* Left ear inner */}
-      <polygon points="13,18 11.5,12 16,16" fill="#f0a0cc" />
-
-      {/* Right ear */}
-      <polygon points="32,19 34,10 27,16" fill="#f9d4ec" />
-      {/* Right ear inner */}
-      <polygon points="31,18 32.5,12 28,16" fill="#f0a0cc" />
-
-      {/* Face blush left */}
-      <ellipse cx="15" cy="28" rx="3" ry="2" fill="#ffb7d5" opacity="0.55" />
-      {/* Face blush right */}
-      <ellipse cx="29" cy="28" rx="3" ry="2" fill="#ffb7d5" opacity="0.55" />
-
-      {/* Eyes — closed happy curve */}
-      <path d="M17.5 25 Q19 23 20.5 25" stroke="#7C5CFF" strokeWidth="1.4" strokeLinecap="round" fill="none" />
-      <path d="M23.5 25 Q25 23 26.5 25" stroke="#7C5CFF" strokeWidth="1.4" strokeLinecap="round" fill="none" />
-
-      {/* Nose */}
-      <ellipse cx="22" cy="27.5" rx="1.2" ry="0.9" fill="#e87ab0" />
-
-      {/* Mouth */}
-      <path d="M20.5 28.5 Q22 30 23.5 28.5" stroke="#e87ab0" strokeWidth="1" strokeLinecap="round" fill="none" />
-
-      {/* Whiskers left */}
-      <line x1="11" y1="27" x2="18" y2="27.5" stroke="#c9a0c0" strokeWidth="0.7" strokeLinecap="round" />
-      <line x1="11" y1="29" x2="18" y2="28.5" stroke="#c9a0c0" strokeWidth="0.7" strokeLinecap="round" />
-
-      {/* Whiskers right */}
-      <line x1="33" y1="27" x2="26" y2="27.5" stroke="#c9a0c0" strokeWidth="0.7" strokeLinecap="round" />
-      <line x1="33" y1="29" x2="26" y2="28.5" stroke="#c9a0c0" strokeWidth="0.7" strokeLinecap="round" />
-
-      {/* Left paw waving — animated via CSS */}
-      <g style={{ transformOrigin: '14px 34px', animation: 'kittenWave 1.6s ease-in-out infinite' }}>
-        <ellipse cx="14" cy="36" rx="4.5" ry="3" fill="#f9d4ec" />
-        {/* Paw toes */}
-        <ellipse cx="11.5" cy="34.5" rx="1.3" ry="1" fill="#f0a0cc" />
-        <ellipse cx="14" cy="33.8" rx="1.3" ry="1" fill="#f0a0cc" />
-        <ellipse cx="16.5" cy="34.5" rx="1.3" ry="1" fill="#f0a0cc" />
+    <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Cute peeping kitten">
+      <polygon points="8,20 5,4 18,14" fill="#f9d4ec" />
+      <polygon points="9.5,18 7,7 16,13" fill="#f0a0cc" />
+      <polygon points="40,20 43,4 30,14" fill="#f9d4ec" />
+      <polygon points="38.5,18 41,7 32,13" fill="#f0a0cc" />
+      <ellipse cx="24" cy="30" rx="18" ry="16" fill="#f9d4ec" />
+      <ellipse cx="12" cy="34" rx="4.5" ry="3" fill="#ffb7d5" opacity="0.6" />
+      <ellipse cx="36" cy="34" rx="4.5" ry="3" fill="#ffb7d5" opacity="0.6" />
+      <circle cx="18" cy="27" r="4" fill="white" />
+      <circle cx="30" cy="27" r="4" fill="white" />
+      <circle cx="18" cy="27" r="2.5" fill="#7C5CFF" />
+      <circle cx="30" cy="27" r="2.5" fill="#7C5CFF" />
+      <circle cx="19.2" cy="25.8" r="1" fill="white" />
+      <circle cx="31.2" cy="25.8" r="1" fill="white" />
+      <ellipse cx="24" cy="32" rx="1.8" ry="1.3" fill="#e87ab0" />
+      <path d="M21.5 33.5 Q24 36.5 26.5 33.5" stroke="#e87ab0" strokeWidth="1.2" strokeLinecap="round" fill="none" />
+      <line x1="5"  y1="31" x2="19" y2="32.5" stroke="#d4a0c4" strokeWidth="0.9" strokeLinecap="round" />
+      <line x1="5"  y1="34" x2="19" y2="33.5" stroke="#d4a0c4" strokeWidth="0.9" strokeLinecap="round" />
+      <line x1="43" y1="31" x2="29" y2="32.5" stroke="#d4a0c4" strokeWidth="0.9" strokeLinecap="round" />
+      <line x1="43" y1="34" x2="29" y2="33.5" stroke="#d4a0c4" strokeWidth="0.9" strokeLinecap="round" />
+      <g style={{ transformOrigin: '10px 44px', animation: 'kittenWave 1.8s ease-in-out infinite' }}>
+        <ellipse cx="10" cy="45" rx="6" ry="4" fill="#f9d4ec" />
+        <ellipse cx="7"  cy="42" rx="1.8" ry="1.4" fill="#f0a0cc" />
+        <ellipse cx="10" cy="41" rx="1.8" ry="1.4" fill="#f0a0cc" />
+        <ellipse cx="13" cy="42" rx="1.8" ry="1.4" fill="#f0a0cc" />
       </g>
-
-      {/* Right paw still */}
-      <ellipse cx="30" cy="36" rx="4.5" ry="3" fill="#f9d4ec" />
-      <ellipse cx="27.5" cy="34.5" rx="1.3" ry="1" fill="#f0a0cc" />
-      <ellipse cx="30" cy="33.8" rx="1.3" ry="1" fill="#f0a0cc" />
-      <ellipse cx="32.5" cy="34.5" rx="1.3" ry="1" fill="#f0a0cc" />
-
       <style>{`
         @keyframes kittenWave {
-          0%,100% { transform: rotate(0deg); }
-          25%      { transform: rotate(-22deg) translateY(-2px); }
-          75%      { transform: rotate(10deg) translateY(-1px); }
+          0%,100% { transform: rotate(0deg) translateY(0px); }
+          30%      { transform: rotate(-28deg) translateY(-4px); }
+          70%      { transform: rotate(12deg) translateY(-2px); }
         }
       `}</style>
     </svg>
   );
 }
 
-// ─── Main Itinerary component ──────────────────────────────────────────────────
+// ─── Main Itinerary component ─────────────────────────────────────────────────
 
 export default function Itinerary() {
   const { trip } = useTrip();
 
-  const [days,      setDays]      = useState<ItineraryDay[]>([]);
-  const [dbLoading, setDbLoading] = useState(true);
-  const [activeDay, setActiveDay] = useState(0);
-  const [dayNotes,  setDayNotes]  = useState<Record<number, string>>({});
-
-  const [modalMode,    setModalMode]    = useState<null | 'add' | string>(null);
-  const [form,         setForm]         = useState<FormState>(BLANK_FORM);
+  const [days,          setDays]          = useState<ItineraryDay[]>([]);
+  const [dbLoading,     setDbLoading]     = useState(true);
+  const [activeDay,     setActiveDay]     = useState(0);
+  const [dayNotes,      setDayNotes]      = useState<Record<number, string>>({});
+  const [saving,        setSaving]        = useState(false);
+  const [saveError,     setSaveError]     = useState<string | null>(null);
+  const [modalMode,     setModalMode]     = useState<null | 'add' | string>(null);
+  const [form,          setForm]          = useState<FormState>(BLANK_FORM);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [dayRenderKey,  setDayRenderKey]  = useState(0);
 
+  const isSavingRef = useRef(false);
+
+  // 60-second tick so detectStatus re-evaluates on the current day
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 60_000);
     return () => clearInterval(id);
   }, []);
 
+  // Load itinerary whenever trip changes
   useEffect(() => {
     if (!trip) { setDbLoading(false); return; }
-    loadItinerary(trip.id).then((remote: ItineraryDay[] | null) => {
-      setDays(remote?.length ? remote : buildEmptyDays(trip.startDate, trip.endDate));
-      setDbLoading(false);
+
+    const cancel = loadItinerary(trip.id, {
+      onCached: (cached) => {
+        if (cached?.length) {
+          setDays(injectPinnedActivities(cached, trip.destination));
+          setDbLoading(false);
+        }
+      },
+      onFresh: (fresh) => {
+        if (isSavingRef.current) return;
+        const base = fresh.length ? fresh : buildEmptyDays(trip.startDate, trip.endDate);
+        setDays(injectPinnedActivities(base, trip.destination));
+        setDbLoading(false);
+      },
+      onError: () => {
+        setDbLoading(prev => {
+          if (prev) {
+            setDays(injectPinnedActivities(
+              buildEmptyDays(trip.startDate, trip.endDate),
+              trip.destination
+            ));
+          }
+          return false;
+        });
+      },
     });
+
+    return cancel;
   }, [trip]);
+
+  // Auto-select today's tab whenever the trip changes.
+  // Runs once per trip (dep: trip?.id) — no stale-ref guard needed.
+  useEffect(() => {
+    if (!trip) return;
+    // days may not be populated yet on first render, so we also run
+    // this after days load via the days-length guard below.
+  }, [trip?.id]);
+
+  useEffect(() => {
+    if (!days.length) return;
+    const today = todayDate();
+    const idx = days.findIndex(d => d.date === today);
+    // Only auto-jump when the trip changes, not on every save.
+    // We use a ref to track whether we've already auto-selected for this trip.
+    setActiveDay(idx >= 0 ? idx : 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trip?.id, days.length > 0]);
+
+  // Bump render key on day change to clear stale Framer Motion state
+  const prevActiveDayRef = useRef(activeDay);
+  useEffect(() => {
+    if (prevActiveDayRef.current !== activeDay) {
+      prevActiveDayRef.current = activeDay;
+      setDayRenderKey(k => k + 1);
+    }
+  }, [activeDay]);
 
   const totalActivities = useMemo(
     () => days.reduce((s, d) => s + d.activities.length, 0), [days]
   );
 
   const day         = days[activeDay] as (ItineraryDay & { activities: RichActivity[] }) | undefined;
-  const dayWeekday  = day ? WEEKDAY_LONG[new Date(day.date).getDay()] : '';
+  const dayWeekday  = day ? WEEKDAY_LONG[localMidnight(day.date).getDay()] : '';
   const isDayInPast = day ? isDayPast(day.date) : false;
   const isToday     = day?.date === todayDate();
   const minStart    = isToday ? nowTime() : undefined;
@@ -761,21 +1273,37 @@ export default function Itinerary() {
   const completedCount = useMemo(() => {
     if (!day) return 0;
     return (day.activities as RichActivity[]).filter(
-      a => (a.status === 'completed') || isDayPast(day.date) ||
-        (day.date === todayDate() && (a.timeEnd ?? a.time) < nowTime())
+      a => detectStatus(a, day.date) === 'completed'
     ).length;
   }, [day]);
 
-  // Conflict detection (warn only, don't block)
   const conflict = useMemo((): RichActivity | null => {
     if (modalMode === null || !day) return null;
     const excludeId = isEditing ? modalMode : undefined;
     return hasConflict(form.timeStart, form.timeEnd, day.activities as RichActivity[], excludeId);
   }, [form.timeStart, form.timeEnd, day, modalMode, isEditing]);
 
-  const persist = useCallback((next: ItineraryDay[]) => {
-    setDays(next);
-    if (trip) saveItinerary(trip.id, next);
+  const stripPinned = (ds: ItineraryDay[]): ItineraryDay[] =>
+    ds.map(d => ({
+      ...d,
+      activities: d.activities.filter(
+        (a: ItineraryActivity) => a.id !== '__departure__' && a.id !== '__return__'
+      ),
+    }));
+
+  const persist = useCallback(async (next: ItineraryDay[]) => {
+    const withPinned = trip ? injectPinnedActivities(next, trip.destination) : next;
+    setDays(withPinned);
+    if (!trip) return;
+    isSavingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
+    const result = await saveItinerary(trip.id, stripPinned(next));
+    isSavingRef.current = false;
+    setSaving(false);
+    if (!result.success) {
+      setSaveError(result.error ?? 'Failed to save. Please try again.');
+    }
   }, [trip]);
 
   const openAddModal = () => {
@@ -786,24 +1314,38 @@ export default function Itinerary() {
       ...BLANK_FORM,
       timeStart: slot,
       timeEnd: `${String(endH).padStart(2, '0')}:${String(sm).padStart(2, '0')}`,
+      multiDay: false,
+      dateEnd: day?.date ?? '',
     });
     setModalMode('add');
   };
 
   const openEditModal = (activity: RichActivity) => {
+    const validCategories = Object.keys(CATEGORIES) as CategoryKey[];
+    const resolvedCategory: CategoryKey =
+      activity.category && validCategories.includes(activity.category)
+        ? activity.category
+        : validCategories.includes(activity.type as unknown as CategoryKey)
+        ? (activity.type as unknown as CategoryKey)
+        : 'sightseeing';
+
+    const hasDateRange = !!activity.dateEnd && activity.dateEnd !== day?.date;
     setForm({
       timeStart: activity.time,
       timeEnd:   activity.timeEnd ?? activity.time,
       title:     activity.title,
       location:  activity.location ?? '',
-      category:  activity.category ?? 'custom',
+      category:  resolvedCategory,
       notes:     activity.notes ?? '',
+      multiDay:  hasDateRange,
+      dateEnd:   hasDateRange ? (activity.dateEnd as string) : (day?.date ?? ''),
     });
     setModalMode(activity.id);
   };
 
   const handleSave = () => {
     if (!form.title.trim()) return;
+    const dayDateStr = day?.date ?? '';
     const base = {
       time:     form.timeStart,
       timeEnd:  form.timeEnd,
@@ -812,6 +1354,9 @@ export default function Itinerary() {
       category: form.category,
       type:     form.category as unknown as ItineraryActivity['type'],
       notes:    form.notes.trim() || undefined,
+      dateEnd:  form.multiDay && form.dateEnd && form.dateEnd !== dayDateStr
+        ? form.dateEnd
+        : undefined,
     };
 
     const next = days.map((d, i) => {
@@ -820,7 +1365,9 @@ export default function Itinerary() {
       if (modalMode === 'add') {
         acts = [...(d.activities as RichActivity[]), { id: crypto.randomUUID(), ...base }];
       } else {
-        acts = (d.activities as RichActivity[]).map(a => a.id === modalMode ? { ...a, ...base } : a);
+        acts = (d.activities as RichActivity[]).map(a =>
+          a.id === modalMode ? { ...a, ...base } : a
+        );
       }
       return { ...d, activities: acts.sort((a, b) => a.time.localeCompare(b.time)) };
     });
@@ -833,11 +1380,11 @@ export default function Itinerary() {
       if (i !== activeDay) return d;
       return {
         ...d,
-        activities: (d.activities as RichActivity[]).map(a =>
-          a.id === activityId
-            ? { ...a, status: (a.status === 'completed' ? 'upcoming' : 'completed') as ActivityStatus }
-            : a
-        ),
+        activities: (d.activities as RichActivity[]).map(a => {
+          if (a.id !== activityId) return a;
+          const effective = detectStatus(a, d.date);
+          return { ...a, status: (effective === 'completed' ? 'upcoming' : 'completed') as ActivityStatus };
+        }),
       };
     });
     persist(next);
@@ -862,11 +1409,9 @@ export default function Itinerary() {
   if (!trip) {
     return (
       <div className="flex flex-col items-center justify-center h-full px-8 text-center py-20">
-        <motion.div
-          className="text-5xl mb-4"
-          animate={{ y: [0, -10, 0] }}
-          transition={{ repeat: Infinity, duration: 3 }}
-        >🗺️</motion.div>
+        <motion.div className="text-5xl mb-4" animate={{ y: [0, -10, 0] }} transition={{ repeat: Infinity, duration: 3 }}>
+          🗺️
+        </motion.div>
         <h2 className="text-lg font-black text-slate-900 mb-1">No trip yet</h2>
         <p className="text-sm text-slate-400">Create a trip first to start building your itinerary.</p>
       </div>
@@ -882,38 +1427,58 @@ export default function Itinerary() {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-
+  // ── Render ──
   return (
-    <div className="min-h-screen pb-28 w-full overflow-x-hidden" style={{ background: '#F8FAFC' }}>
+    <div
+      className="min-h-screen pb-28 w-full overflow-x-hidden"
+      style={{ background: 'linear-gradient(160deg, #f8fafc 0%, rgba(237,233,254,0.35) 50%, rgba(253,242,248,0.25) 100%)' }}
+    >
+      <AnimatePresence>
+        {saving && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+            className="fixed top-4 right-16 z-50 bg-violet-50 border border-violet-200 rounded-2xl px-3 py-2 text-xs text-violet-600 font-semibold flex items-center gap-1.5 shadow-sm"
+          >
+            <div className="w-3 h-3 rounded-full border-2 border-violet-300 border-t-violet-600 animate-spin" />
+            Saving…
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {saveError && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+            className="fixed top-4 left-4 right-4 z-50 bg-rose-50 border border-rose-200 rounded-2xl px-4 py-3 text-xs text-rose-600 font-semibold flex items-center gap-2 shadow-sm"
+          >
+            <AlertTriangle size={14} className="flex-shrink-0" />
+            Save failed — check your connection and try again.
+            <button onClick={() => setSaveError(null)} className="ml-auto text-rose-400 hover:text-rose-600">
+              <X size={14} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* Decorative background blobs */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
-        <div className="absolute -top-16 -right-16 w-56 h-56 rounded-full opacity-[0.13]"
-          style={{ background: '#7C5CFF' }} />
-        <div className="absolute top-80 -left-12 w-40 h-40 rounded-full opacity-[0.10]"
-          style={{ background: '#FFB7E1' }} />
-        <div className="absolute bottom-40 -right-10 w-32 h-32 rounded-full opacity-[0.08]"
-          style={{ background: '#C7E9FF' }} />
+        <div className="absolute -top-16 -right-16 w-56 h-56 rounded-full opacity-[0.13]" style={{ background: '#7C5CFF' }} />
+        <div className="absolute top-80 -left-12 w-40 h-40 rounded-full opacity-[0.10]" style={{ background: '#FFB7E1' }} />
+        <div className="absolute bottom-40 -right-10 w-32 h-32 rounded-full opacity-[0.08]" style={{ background: '#C7E9FF' }} />
       </div>
 
-      {/* ── Header ── */}
-      <div className="px-4 sm:px-6 pt-6 pb-3">
-        <div className="flex items-start justify-between">
+      <div className="px-4 sm:px-5 pt-12 pb-4 relative">
+        <div className="relative flex items-start justify-between">
           <div>
-            <div className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1 rounded-full mb-2"
-              style={{ background: 'rgba(124,92,255,0.1)', color: '#7C5CFF' }}>
-              🌸 {trip.destination}
+            <div className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1 rounded-full mb-2 bg-violet-100 text-violet-600">
+              <MapPin size={10} />
+              {trip.destination}
             </div>
             <h1 className="text-2xl font-black text-slate-900 mb-0.5 tracking-tight">Itinerary</h1>
-            <p className="text-xs text-slate-400">
+            <p className="text-slate-400 text-xs">
               {totalActivities} {totalActivities === 1 ? 'activity' : 'activities'} planned
             </p>
           </div>
-          {/* Peeping kitten avatar */}
           <motion.div
-            className="w-12 h-12 rounded-2xl flex items-center justify-center overflow-hidden flex-shrink-0"
-            style={{ background: 'linear-gradient(135deg, #ede8ff, #ffd6f0)' }}
+            className="w-14 h-14 rounded-2xl flex items-center justify-center overflow-hidden flex-shrink-0 bg-violet-50 border border-violet-100"
             whileHover={{ scale: 1.08 }}
           >
             <KittenAvatar />
@@ -922,10 +1487,11 @@ export default function Itinerary() {
       </div>
 
       {/* ── Day selector ── */}
-      <div className="px-4 sm:px-6 mb-4">
+      <div className="px-4 sm:px-6 mt-2 mb-4">
         <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
           {days.map((d, i) => {
-            const dateObj  = new Date(d.date);
+            // Use localMidnight to get the correct weekday/date in the user's timezone
+            const dateObj  = localMidnight(d.date);
             const isActive = i === activeDay;
             const isPast   = isDayPast(d.date);
             return (
@@ -956,12 +1522,18 @@ export default function Itinerary() {
         </div>
       </div>
 
-      {/* ── Day progress (only if there are activities) ── */}
+      {/* ── Day progress (keyed on date so DayProgress fully remounts, resetting useWeather) ── */}
       {day && day.activities.length > 0 && (
-        <DayProgress total={day.activities.length} completed={completedCount} />
+        <DayProgress
+          key={day.date}
+          total={day.activities.length}
+          completed={completedCount}
+          destination={trip.destination}
+          date={day.date}
+        />
       )}
 
-      {/* ── Day header ── */}
+      {/* ── Day header row ── */}
       <div className="px-4 sm:px-6 flex items-center justify-between mb-4 gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <CalendarIcon size={14} className="text-violet-400 flex-shrink-0" />
@@ -987,35 +1559,40 @@ export default function Itinerary() {
         )}
       </div>
 
-      {/* ── Timeline or empty ── */}
-      {!day || day.activities.length === 0 ? (
-        <EmptyItinerary isPast={isDayInPast} onAdd={openAddModal} />
-      ) : (
-        <div className="px-4 sm:px-6">
-          {/* Vertical connecting line */}
-          <div className="relative">
-            <div
-              className="absolute left-[10px] top-3 bottom-3 w-0.5 rounded-full"
-              style={{ background: 'linear-gradient(180deg, #7C5CFF 0%, rgba(139,92,246,0.1) 100%)' }}
-            />
-            <div className="space-y-3 pl-8">
-              <AnimatePresence initial={false}>
+      {/* ── Timeline ── */}
+      <div key={dayRenderKey}>
+        {!day || day.activities.length === 0 ? (
+          <EmptyItinerary isPast={isDayInPast} onAdd={openAddModal} />
+        ) : (
+          <div className="px-4 sm:px-6">
+            <div className="relative">
+              <div
+                className="absolute inset-y-0 pointer-events-none"
+                style={{
+                  left: 17,
+                  width: 2,
+                  borderRadius: 9999,
+                  background: 'linear-gradient(180deg, rgba(124,92,255,0.30) 0%, rgba(139,92,246,0.06) 100%)',
+                }}
+              />
+              <div className="space-y-3">
                 {(day.activities as RichActivity[]).map(activity => (
                   <ActivityCard
-                    key={activity.id}
+                    key={`${day.date}-${activity.id}`}
                     activity={activity}
                     dayDate={day.date}
                     isDayInPast={isDayInPast}
                     onEdit={() => openEditModal(activity)}
                     onDelete={() => setConfirmDelete(activity.id)}
                     onToggle={() => handleToggle(activity.id)}
+                    allActivities={day.activities as RichActivity[]}
                   />
                 ))}
-              </AnimatePresence>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* ── Day notes ── */}
       <DayNotes
@@ -1035,6 +1612,7 @@ export default function Itinerary() {
             isEditing={isEditing}
             activeDay={activeDay}
             dayWeekday={dayWeekday}
+            dayDateStr={day?.date ?? ''}
             form={form}
             setForm={setForm}
             onSave={handleSave}

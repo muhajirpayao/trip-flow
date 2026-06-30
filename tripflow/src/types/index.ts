@@ -3,6 +3,7 @@ export type Currency = 'PHP' | 'USD' | 'EUR' | 'GBP' | 'JPY' | 'SGD' | 'AUD' | '
 
 export interface Trip {
   id: string;
+  displayName: string;
   destination: string;
   startDate: string;
   endDate: string;
@@ -13,6 +14,7 @@ export interface Trip {
 }
 
 export interface OnboardingForm {
+  name: string;
   dest: string;
   startDate: string;
   endDate: string;

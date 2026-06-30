@@ -1,29 +1,38 @@
-// src/routes/AppRouter.tsx
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
 import DashboardLayout from '../layouts/DashboardLayout';
 import LandingPage from '../pages/LandingPage';
+import UnderDevelopment from '../pages/UnderDevelopment';
 import { useAuth } from '../context/AuthContext';
+import NotificationsPage from '../pages/NotificationsPage';
+import PlaceholderPage from '../components/common/PlaceholderPage';
 
-const AuthPage  = lazy(() => import('../pages/AuthPage'));
-const Home      = lazy(() => import('../pages/Home'));
+// ADMIN IMPORTS
+import AdminDashboard from '../pages/admin/AdminDashboard';
+import AdminAccessScreen from '../components/admin/AdminAccessScreen';
+import AdminRouteGuard from './AdminRouteGuard';
+import AdminNotificationsPage from '../pages/admin/AdminNotifications';
+
+const AuthPage = lazy(() => import('../pages/AuthPage'));
+const Home = lazy(() => import('../pages/Home'));
 const Dashboard = lazy(() => import('../pages/Dashboard'));
 const Itinerary = lazy(() => import('../pages/Itinerary'));
-const Expenses  = lazy(() => import('../pages/Expenses'));
-const Places    = lazy(() => import('../pages/Places'));
-const Packing   = lazy(() => import('../pages/Packing'));
-const Settings  = lazy(() => import('../pages/Settings'));
+const Expenses = lazy(() => import('../pages/Expenses'));
+const Places = lazy(() => import('../pages/Places'));
+const Profile = lazy(() => import('../pages/Profile'));
+const Settings = lazy(() => import('../pages/Settings'));
+
+const UNDER_DEVELOPMENT = false;
 
 const Loader = () => (
   <div className="min-h-screen flex items-center justify-center bg-slate-50">
-    <div className="w-8 h-8 rounded-full border-4 border-indigo-200 border-t-indigo-500 animate-spin" />
+    <div className="w-8 h-8 rounded-full border-4 border-violet-200 border-t-violet-500 animate-spin" />
   </div>
 );
 
 function GuestOnly({ children }: { children: React.ReactNode }) {
   const { isAuthed, loading } = useAuth();
   if (loading) return <Loader />;
-  // After login → go to dashboard, not landing
   if (isAuthed) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 }
@@ -35,38 +44,69 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-const router = createBrowserRouter([
-  {
-    path: '/',
-    element: <LandingPage />,
-  },
-  {
-    path: '/auth',
-    element: (
-      <GuestOnly>
-        <AuthPage />
-      </GuestOnly>
-    ),
-  },
-  {
-    path: '/dashboard',
-    element: (
-      <RequireAuth>
-        <DashboardLayout />
-      </RequireAuth>
-    ),
-    children: [
-      { index: true,       element: <Home /> },       // NEW home replaces old Dashboard
-      { path: 'trip',      element: <Dashboard /> },  // trip detail view
-      { path: 'itinerary', element: <Itinerary /> },
-      { path: 'expenses',  element: <Expenses /> },
-      { path: 'places',    element: <Places /> },
-      { path: 'packing',   element: <Packing /> },
-      { path: 'settings',  element: <Settings /> },
-    ],
-  },
-  { path: '*', element: <Navigate to="/" replace /> },
-]);
+const router = UNDER_DEVELOPMENT
+  ? createBrowserRouter([{ path: '*', element: <UnderDevelopment /> }])
+  : createBrowserRouter([
+      {
+        path: '/',
+        element: <LandingPage />,
+      },
+
+      // ADMIN LOGIN SCREEN
+      {
+        path: '/admin',
+        element: <AdminAccessScreen />,
+      },
+
+      // ADMIN PROTECTED ROUTES (all wrapped in AdminLayout via AdminRouteGuard)
+      {
+        path: '/admin',
+        element: <AdminRouteGuard />,
+        children: [
+          { path: 'dashboard',     element: <AdminDashboard /> },
+          { path: 'notifications', element: <AdminNotificationsPage /> },
+          { path: 'users',         element: <PlaceholderPage title="Users" icon={''} description={''} accent={''} /> },
+          { path: 'activity',      element: <PlaceholderPage title="Activity Logs" icon={''} description={''} accent={''} /> },
+          { path: 'announcements', element: <PlaceholderPage title="Announcements" icon={''} description={''} accent={''} /> },
+          { path: 'analytics',     element: <PlaceholderPage title="Analytics" icon={''} description={''} accent={''} /> },
+          { path: 'settings',      element: <PlaceholderPage title="Settings" icon={''} description={''} accent={''} /> },
+        ],
+      },
+
+      {
+        path: '/auth',
+        element: (
+          <GuestOnly>
+            <AuthPage />
+          </GuestOnly>
+        ),
+      },
+
+      {
+        path: '/dashboard',
+        element: (
+          <RequireAuth>
+            <DashboardLayout />
+          </RequireAuth>
+        ),
+        children: [
+          { index: true,               element: <Dashboard /> },
+          { path: 'home',              element: <Home /> },
+          { path: 'trip',              element: <Dashboard /> },
+          { path: 'itinerary',         element: <Itinerary /> },
+          { path: 'expenses',          element: <Expenses /> },
+          { path: 'places',            element: <Places /> },
+          { path: 'profile',           element: <Profile /> },
+          { path: 'settings',          element: <Settings /> },
+          { path: 'notifications',     element: <NotificationsPage /> },
+        ],
+      },
+
+      {
+        path: '*',
+        element: <Navigate to="/" replace />,
+      },
+    ]);
 
 export default function AppRouter() {
   return (

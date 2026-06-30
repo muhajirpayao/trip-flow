@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTrip } from '../context/TripContext';
 import OnboardingWizard from '../components/onboarding/OnboardingWizard';
 import { fmtDate, tripDays, daysUntil } from '../utils';
-import { Plus, MapPin, Calendar, Clock, ChevronRight, Compass, LogOut } from 'lucide-react';
+import { Plus, MapPin, Calendar, Clock, ChevronRight, Compass } from 'lucide-react';
 import type { Trip } from '../types';
 
 const DESTINATION_COVERS: Record<string, string> = {
@@ -118,7 +118,7 @@ function EmptyState({ onStart }: { onStart: () => void }) {
 }
 
 export default function Home() {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   const { allTrips, loadingTrips, saveTrip } = useTrip();
   const [showOnboarding, setShowOnboarding] = useState(false);
   const navigate = useNavigate();
@@ -128,7 +128,6 @@ export default function Home() {
   const past = allTrips.filter(t => new Date(t.endDate) < new Date());
 
   const handleTripClick = async (trip: Trip) => {
-    // Set as active trip then navigate to trip detail
     const saved = await saveTrip(trip);
     if (saved) {
       navigate('/dashboard/trip');
@@ -146,54 +145,40 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-slate-50 pb-24">
 
-      {/* Hero header */}
-      <div className="bg-gradient-to-br from-indigo-600 via-violet-600 to-purple-700 px-6 pt-14 pb-20 relative overflow-hidden">
-        {/* Decorative circles */}
-        <div className="absolute top-0 right-0 w-64 h-64 rounded-full bg-white/5 -translate-y-20 translate-x-20" />
-        <div className="absolute bottom-0 left-0 w-48 h-48 rounded-full bg-black/10 translate-y-16 -translate-x-12" />
-        <div className="absolute top-12 left-1/2 w-32 h-32 rounded-full bg-white/5" />
+      {/* ── Hero header — compact, matches Dashboard's scale ── */}
+      <div className="bg-gradient-to-br from-indigo-600 via-violet-600 to-purple-700 px-6 pt-12 pb-16 relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-56 h-56 rounded-full bg-white/5 -translate-y-16 translate-x-16" />
+        <div className="absolute bottom-0 left-0 w-40 h-40 rounded-full bg-black/10 translate-y-12 -translate-x-10" />
 
-        {/* Top bar */}
-        <div className="flex items-center justify-between mb-8 relative z-10">
+        {/* Top bar — logo only; bell + profile are rendered globally by DashboardLayout */}
+        <div className="flex items-center justify-between mb-3 relative z-10">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center">
               <Compass size={16} className="text-white" />
             </div>
             <span className="text-white font-black text-lg tracking-tight">TripFlow</span>
           </div>
-          <button
-            onClick={async () => { await signOut(); navigate('/auth'); }}
-            className="flex items-center gap-1.5 text-white/60 hover:text-white text-xs font-semibold transition-colors"
-          >
-            <LogOut size={13} />
-            Sign out
-          </button>
         </div>
 
         {/* Greeting */}
         <div className="relative z-10">
-          <p className="text-indigo-200 text-sm font-medium mb-1">Good to see you back ✈️</p>
-          <h1 className="text-3xl font-black text-white leading-tight mb-1 capitalize">
+          <p className="text-indigo-200 text-xs font-medium mb-1">Good to see you back ✈️</p>
+          <h1 className="text-2xl font-black text-white leading-tight mb-1 capitalize">
             {firstName}
           </h1>
-          <p className="text-indigo-200 text-sm">
-            {allTrips.length === 0
-              ? 'Ready to plan your first adventure?'
-              : `${allTrips.length} trip${allTrips.length > 1 ? 's' : ''} · ${upcoming.length} upcoming`}
-          </p>
         </div>
 
-        {/* Stats row */}
+        {/* Stats row — smaller, compact */}
         {allTrips.length > 0 && (
-          <div className="flex gap-3 mt-6 relative z-10">
+          <div className="flex gap-2 mt-3 relative z-10">
             {[
               { val: allTrips.length, label: 'Trips' },
               { val: upcoming.length, label: 'Upcoming' },
               { val: past.length, label: 'Completed' },
             ].map(({ val, label }) => (
-              <div key={label} className="flex-1 bg-white/15 backdrop-blur-sm rounded-2xl py-3 px-3 text-center">
-                <p className="text-xl font-black text-white">{val}</p>
-                <p className="text-[10px] font-semibold text-indigo-200 uppercase tracking-wider">{label}</p>
+              <div key={label} className="flex-1 bg-white/15 backdrop-blur-sm rounded-xl py-2 px-2 text-center">
+                <p className="text-base font-black text-white">{val}</p>
+                <p className="text-[9px] font-semibold text-indigo-200 uppercase tracking-wider">{label}</p>
               </div>
             ))}
           </div>
@@ -201,7 +186,7 @@ export default function Home() {
       </div>
 
       {/* Content — pulled up over hero */}
-      <div className="px-4 -mt-10 relative z-10 space-y-6">
+      <div className="px-4 -mt-8 relative z-10 space-y-6">
 
         {/* Plan new trip CTA */}
         <button
