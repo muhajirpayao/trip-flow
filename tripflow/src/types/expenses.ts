@@ -20,6 +20,7 @@ export interface Expense {
   notes?: string;
   expenseDate: string; // ISO date string YYYY-MM-DD
   createdAt: string;
+  photoUrl?: string;   // optional receipt / photo
 }
 
 export interface ExpenseFormData {
@@ -28,6 +29,8 @@ export interface ExpenseFormData {
   description: string;
   notes?: string;
   expenseDate: string;
+  photoUrl?: string;   // persisted URL after upload
+  photoFile?: File;    // transient — used in modal only, not sent to service raw
 }
 
 export const CATEGORY_META: Record<

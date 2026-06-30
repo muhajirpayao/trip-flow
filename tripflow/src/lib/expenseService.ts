@@ -1,5 +1,5 @@
 // src/lib/expenseService.ts
-// All Supabase CRUD for the expenses table.
+// All Supabase CRUD for the expenses table + photo storage.
 
 import { supabase } from './supabase';
 import type { Expense, ExpenseCategory, ExpenseFormData } from '../types/expenses';
@@ -16,10 +16,74 @@ function rowToExpense(row: Record<string, unknown>): Expense {
     notes:       row.notes ? String(row.notes) : undefined,
     expenseDate: String(row.expense_date ?? ''),
     createdAt:   String(row.created_at ?? new Date().toISOString()),
+    photoUrl:    row.photo_url ? String(row.photo_url) : undefined,
   };
 }
 
-// ── public API ─────────────────────────────────────────────────────────────────
+// ── photo storage ──────────────────────────────────────────────────────────────
+
+const BUCKET = 'expense-photos';
+
+/**
+ * Upload a photo file to Supabase Storage under expenses/<tripId>/<uuid>.<ext>
+ * Returns the public URL on success, or null on failure.
+ *
+ * Prerequisites: create a public bucket called "expense-photos" in your
+ * Supabase project → Storage → New bucket → name: expense-photos, Public: on
+ */
+export async function uploadExpensePhoto(
+  tripId: string,
+  file: File,
+): Promise<string | null> {
+  const ext  = file.name.split('.').pop() ?? 'jpg';
+  const path = `expenses/${tripId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+
+  const { error } = await supabase.storage
+    .from(BUCKET)
+    .upload(path, file, { upsert: false, contentType: file.type });
+
+  if (error) {
+    console.error('[expenseService] uploadExpensePhoto', error);
+    return null;
+  }
+
+  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
+  return data?.publicUrl ?? null;
+}
+
+/**
+ * Delete a photo from storage given its public URL.
+ * Silently ignores errors (best-effort cleanup).
+ */
+async function deletePhotoByUrl(url: string): Promise<void> {
+  try {
+    // Extract the path after /object/public/<bucket>/
+    const marker = `/object/public/${BUCKET}/`;
+    const idx = url.indexOf(marker);
+    if (idx === -1) return;
+    const path = decodeURIComponent(url.slice(idx + marker.length));
+    await supabase.storage.from(BUCKET).remove([path]);
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * Trigger a browser download of the expense photo.
+ * Uses a temporary <a> element with the public URL.
+ */
+export function downloadExpensePhoto(photoUrl: string, filename?: string): void {
+  const a = document.createElement('a');
+  a.href = photoUrl;
+  a.download = filename ?? `receipt-${Date.now()}.jpg`;
+  a.target = '_blank';          // fallback for browsers that block cross-origin downloads
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+// ── public CRUD ────────────────────────────────────────────────────────────────
 
 export async function fetchExpenses(tripId: string): Promise<Expense[]> {
   const { data, error } = await supabase
@@ -40,6 +104,12 @@ export async function addExpense(
   tripId: string,
   form: ExpenseFormData,
 ): Promise<Expense | null> {
+  // Upload photo first (if provided as a File object)
+  let photoUrl = form.photoUrl ?? null;
+  if (form.photoFile) {
+    photoUrl = await uploadExpensePhoto(tripId, form.photoFile);
+  }
+
   const { data, error } = await supabase
     .from('expenses')
     .insert({
@@ -49,6 +119,7 @@ export async function addExpense(
       description:  form.description,
       notes:        form.notes || null,
       expense_date: form.expenseDate,
+      photo_url:    photoUrl,
     })
     .select()
     .single();
@@ -63,7 +134,26 @@ export async function addExpense(
 export async function updateExpense(
   id: string,
   form: ExpenseFormData,
+  existingPhotoUrl?: string,
 ): Promise<Expense | null> {
+  let photoUrl: string | null = form.photoUrl ?? existingPhotoUrl ?? null;
+
+  // If a new file was chosen, upload it and optionally remove the old one
+  if (form.photoFile) {
+    const uploaded = await uploadExpensePhoto('unknown', form.photoFile);
+    if (uploaded) {
+      // Clean up old photo (best-effort)
+      if (existingPhotoUrl) deletePhotoByUrl(existingPhotoUrl);
+      photoUrl = uploaded;
+    }
+  }
+
+  // If photoUrl was explicitly cleared (set to '')
+  if (form.photoUrl === '') {
+    if (existingPhotoUrl) deletePhotoByUrl(existingPhotoUrl);
+    photoUrl = null;
+  }
+
   const { data, error } = await supabase
     .from('expenses')
     .update({
@@ -72,6 +162,7 @@ export async function updateExpense(
       description:  form.description,
       notes:        form.notes || null,
       expense_date: form.expenseDate,
+      photo_url:    photoUrl,
     })
     .eq('id', id)
     .select()
@@ -84,7 +175,9 @@ export async function updateExpense(
   return rowToExpense(data as Record<string, unknown>);
 }
 
-export async function deleteExpense(id: string): Promise<boolean> {
+export async function deleteExpense(id: string, photoUrl?: string): Promise<boolean> {
+  if (photoUrl) deletePhotoByUrl(photoUrl);
+
   const { error } = await supabase
     .from('expenses')
     .delete()

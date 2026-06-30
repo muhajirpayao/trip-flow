@@ -1,3 +1,4 @@
+// src/pages/Expenses.tsx
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, BarChart2, List } from 'lucide-react';
@@ -9,42 +10,106 @@ import {
   ExpenseModal,
   ExpenseAnalytics,
 } from '../components/expenses';
+import PhotoViewer from '../components/expenses/PhotoViewer';
 import {
   fetchExpenses,
   addExpense,
   updateExpense,
   deleteExpense,
+  downloadExpensePhoto,
 } from '../lib/expenseService';
 import type { Expense, ExpenseFormData } from '../types/expenses';
 
 type Tab = 'list' | 'analytics';
+
+// ── Date helpers (UTC-safe) ───────────────────────────────────────────────────
+
+/** Today's date as YYYY-MM-DD in LOCAL time (not UTC-shifted). */
+function localToday(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Build YYYY-MM-DD strings for every day from startDate → endDate
+ * using LOCAL date arithmetic, avoiding UTC-offset shifts.
+ */
+function buildDayList(startDate: string, endDate: string): string[] {
+  const list: string[] = [];
+  // Parse as local midnight to avoid off-by-one on timezone boundaries
+  const [sy, sm, sd] = startDate.split('-').map(Number);
+  const [ey, em, ed] = endDate.split('-').map(Number);
+  const cur  = new Date(sy, sm - 1, sd);
+  const end  = new Date(ey, em - 1, ed);
+
+  while (cur <= end) {
+    const y = cur.getFullYear();
+    const mo = String(cur.getMonth() + 1).padStart(2, '0');
+    const da = String(cur.getDate()).padStart(2, '0');
+    list.push(`${y}-${mo}-${da}`);
+    cur.setDate(cur.getDate() + 1);
+  }
+  return list;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function Expenses() {
   const { trip } = useTrip();
 
   const [expenses, setExpenses]   = useState<Expense[]>([]);
   const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState(false);      // FIX: track load failure
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing]     = useState<Expense | null>(null);
   const [tab, setTab]             = useState<Tab>('list');
 
+  // Photo viewer
+  const [viewingPhoto, setViewingPhoto] = useState<Expense | null>(null);
+
   const load = useCallback(async () => {
     if (!trip) return;
     setLoading(true);
-    const data = await fetchExpenses(trip.id);
-    setExpenses(data);
-    setLoading(false);
+    setError(false);
+    try {
+      const data = await fetchExpenses(trip.id);
+      setExpenses(data);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, [trip]);
 
   useEffect(() => { load(); }, [load]);
 
+  // ── CRUD handlers ──────────────────────────────────────────────────────────
+
   const handleSubmit = async (form: ExpenseFormData) => {
     if (!trip) return;
+
     if (editing) {
-      const optimistic = { ...editing, ...form, amount: Number(form.amount) };
+      // Optimistic update (revert on failure)
+      const optimistic: Expense = {
+        ...editing,
+        ...form,
+        amount: Number(form.amount),
+        photoUrl: form.photoFile
+          ? editing.photoUrl          // keep old URL until upload returns
+          : (form.photoUrl ?? editing.photoUrl),
+      };
       setExpenses(prev => prev.map(e => (e.id === editing.id ? optimistic : e)));
-      const updated = await updateExpense(editing.id, form);
-      if (updated) setExpenses(prev => prev.map(e => (e.id === updated.id ? updated : e)));
+
+      const updated = await updateExpense(editing.id, form, editing.photoUrl);
+      if (updated) {
+        setExpenses(prev => prev.map(e => (e.id === updated.id ? updated : e)));
+      } else {
+        // FIX: rollback on failure
+        setExpenses(prev => prev.map(e => (e.id === editing.id ? editing : e)));
+      }
       setEditing(null);
     } else {
       const tempId = `temp-${Date.now()}`;
@@ -53,10 +118,16 @@ export default function Expenses() {
         amount: Number(form.amount), category: form.category,
         description: form.description, notes: form.notes,
         expenseDate: form.expenseDate, createdAt: new Date().toISOString(),
+        // Show local preview immediately if a file was chosen
+        photoUrl: form.photoFile
+          ? URL.createObjectURL(form.photoFile)
+          : form.photoUrl,
       };
       setExpenses(prev => [optimistic, ...prev]);
+
       const created = await addExpense(trip.id, form);
       if (created) {
+        // Swap temp entry for the real one (with server URL)
         setExpenses(prev => prev.map(e => (e.id === tempId ? created : e)));
       } else {
         setExpenses(prev => prev.filter(e => e.id !== tempId));
@@ -64,47 +135,44 @@ export default function Expenses() {
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: string, photoUrl?: string) => {
     setExpenses(prev => prev.filter(e => e.id !== id));
-    const ok = await deleteExpense(id);
-    if (!ok) load();
+    const ok = await deleteExpense(id, photoUrl);
+    if (!ok) load(); // FIX: rollback by reloading
+  };
+
+  const handleDownload = (photoUrl: string, description: string) => {
+    const safeName = description.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    downloadExpensePhoto(photoUrl, `receipt-${safeName}.jpg`);
   };
 
   const openAdd  = () => { setEditing(null);  setModalOpen(true); };
   const openEdit = (e: Expense) => { setEditing(e); setModalOpen(true); };
 
-  const spent = expenses.reduce((s, e) => s + e.amount, 0);
+  // ── Day list + active day ──────────────────────────────────────────────────
 
-  // Build the full list of trip days from start → end date.
+  // FIX: built with local-time arithmetic to avoid UTC shift
   const tripDayList = useMemo(() => {
     if (!trip) return [];
-    const list: string[] = [];
-    const start = new Date(trip.startDate);
-    const end   = new Date(trip.endDate);
-    const cur   = new Date(start);
-    while (cur <= end) {
-      list.push(cur.toISOString().slice(0, 10));
-      cur.setDate(cur.getDate() + 1);
-    }
-    return list;
+    return buildDayList(trip.startDate, trip.endDate);
   }, [trip]);
 
   const [activeDay, setActiveDay] = useState(0);
 
-  // Keep activeDay pointing at today if it's within range, otherwise day 0.
+  // FIX: use localToday() so we compare local dates, not UTC-shifted ones
   useEffect(() => {
     if (!tripDayList.length) return;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     const idx = tripDayList.indexOf(today);
+    // If today is within the trip, jump to it; otherwise stay on day 0
     setActiveDay(idx >= 0 ? idx : 0);
   }, [tripDayList]);
 
-  // FIX: activeDate is the canonical selected date string (YYYY-MM-DD).
-  // It's passed down to both DailyBudgetCard and ExpenseModal so they
-  // always operate on the day the user actually has selected.
-  const activeDate = tripDayList[activeDay] ?? new Date().toISOString().slice(0, 10);
-
+  const activeDate = tripDayList[activeDay] ?? localToday();
   const dayExpenses = expenses.filter(e => e.expenseDate.slice(0, 10) === activeDate);
+  const spent = expenses.reduce((s, e) => s + e.amount, 0);
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   if (!trip) {
     return (
@@ -147,7 +215,7 @@ export default function Expenses() {
         <BudgetOverview budget={trip.budget} spent={spent} currency={trip.currency} />
       </div>
 
-      {/* Daily Budget — FIX: now receives activeDate so it shows spend for the selected day */}
+      {/* Daily Budget */}
       <div className="px-4 mb-4">
         <DailyBudgetCard
           budget={trip.budget} currency={trip.currency}
@@ -161,14 +229,18 @@ export default function Expenses() {
       <div className="px-4 mb-4">
         <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
           {tripDayList.map((d, i) => {
-            const dateObj  = new Date(d);
+            // FIX: parse as local date so weekday/day-number is never off by 1
+            const [dy, dm, dd] = d.split('-').map(Number);
+            const dateObj  = new Date(dy, dm - 1, dd);
             const isActive = i === activeDay;
+            const isToday  = d === localToday();
+
             return (
               <motion.button
                 key={d}
                 onClick={() => setActiveDay(i)}
                 whileTap={{ scale: 0.92 }}
-                className={`flex-shrink-0 flex flex-col items-center justify-center w-[58px] py-2.5 rounded-2xl border transition-colors duration-200 ${
+                className={`relative flex-shrink-0 flex flex-col items-center justify-center w-[58px] py-2.5 rounded-2xl border transition-colors duration-200 ${
                   isActive
                     ? 'text-white border-transparent shadow-lg shadow-violet-300'
                     : 'bg-white text-slate-600 border-slate-100 shadow-sm'
@@ -182,6 +254,10 @@ export default function Expenses() {
                 <span className={`text-[9px] font-medium ${isActive ? 'text-violet-100' : 'text-slate-400'}`}>
                   {dateObj.toLocaleDateString(undefined, { month: 'short' })}
                 </span>
+                {/* Today indicator dot */}
+                {isToday && !isActive && (
+                  <span className="absolute bottom-1.5 h-1 w-1 rounded-full bg-violet-400" />
+                )}
               </motion.button>
             );
           })}
@@ -190,7 +266,16 @@ export default function Expenses() {
 
       {/* Main content */}
       <div className="px-4 pb-28">
-        {loading ? (
+        {/* FIX: show error state instead of hanging on loading */}
+        {error ? (
+          <div className="py-12 text-center">
+            <p className="text-sm text-slate-400 mb-3">Failed to load expenses.</p>
+            <button onClick={load}
+              className="text-xs font-semibold text-violet-500 underline underline-offset-2">
+              Try again
+            </button>
+          </div>
+        ) : loading ? (
           <div className="flex flex-col gap-2.5">
             {[...Array(3)].map((_, i) => (
               <div key={i} className="h-16 animate-pulse rounded-2xl bg-white/70"
@@ -210,8 +295,13 @@ export default function Expenses() {
                     </p>
                   ) : (
                     <ExpenseList
-                      expenses={dayExpenses} currency={trip.currency}
-                      onAdd={openAdd} onEdit={openEdit} onDelete={handleDelete}
+                      expenses={dayExpenses}
+                      currency={trip.currency}
+                      onAdd={openAdd}
+                      onEdit={openEdit}
+                      onDelete={handleDelete}
+                      onDownload={handleDownload}
+                      onView={e => setViewingPhoto(e)}
                     />
                   )}
                 </div>
@@ -236,7 +326,7 @@ export default function Expenses() {
         <Plus size={24} strokeWidth={2.5} className="text-white" />
       </motion.button>
 
-      {/* Modal — FIX: passes activeDate so new expenses default to the selected day */}
+      {/* Modal */}
       <ExpenseModal
         open={modalOpen}
         editing={editing}
@@ -244,6 +334,12 @@ export default function Expenses() {
         defaultDate={activeDate}
         onClose={() => { setModalOpen(false); setEditing(null); }}
         onSubmit={handleSubmit}
+      />
+
+      {/* Photo viewer lightbox */}
+      <PhotoViewer
+        expense={viewingPhoto}
+        onClose={() => setViewingPhoto(null)}
       />
     </div>
   );

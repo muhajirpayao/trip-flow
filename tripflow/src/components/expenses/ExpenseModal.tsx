@@ -1,10 +1,13 @@
 // src/components/expenses/ExpenseModal.tsx
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { X, Check, ChevronDown, ArrowRight, RefreshCw } from 'lucide-react';
+import {
+  X, Check, ChevronDown, ArrowRight, RefreshCw,
+  Camera, ImagePlus, Trash2,
+} from 'lucide-react';
 import CategoryChip from './CategoryChip';
 import {
   CATEGORY_META,
@@ -37,7 +40,6 @@ interface Props {
   open: boolean;
   editing?: Expense | null;
   tripCurrency: Currency;
-  /** FIX: the date of the currently-selected day tab — used as default for new expenses */
   defaultDate?: string;
   onClose: () => void;
   onSubmit: (data: ExpenseFormData) => Promise<void>;
@@ -46,15 +48,20 @@ interface Props {
 export default function ExpenseModal({
   open, editing, tripCurrency, defaultDate, onClose, onSubmit,
 }: Props) {
-  // FIX: use the selected day (defaultDate) rather than always falling back to today
-  const today = new Date().toISOString().slice(0, 10);
+  const today           = new Date().toISOString().slice(0, 10);
   const resolvedDefault = defaultDate ?? today;
 
-  const [inputCurrency, setInputCurrency] = useState<Currency>(tripCurrency);
+  const [inputCurrency, setInputCurrency]     = useState<Currency>(tripCurrency);
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
-  const [rates, setRates] = useState<Record<Currency, number> | null>(null);
-  const [loadingRates, setLoadingRates] = useState(false);
-  const [rawAmount, setRawAmount] = useState('');
+  const [rates, setRates]                     = useState<Record<Currency, number> | null>(null);
+  const [loadingRates, setLoadingRates]       = useState(false);
+  const [rawAmount, setRawAmount]             = useState('');
+
+  // ── Photo state ────────────────────────────────────────────────────────────
+  const [photoFile, setPhotoFile]     = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const fileInputRef  = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const {
     handleSubmit, control, reset, setValue,
@@ -63,7 +70,6 @@ export default function ExpenseModal({
     resolver: zodResolver(schema),
     defaultValues: {
       amount: '', category: 'food', description: '', notes: '',
-      // FIX: initialise with the selected day, not today
       expenseDate: resolvedDefault,
     },
   });
@@ -94,18 +100,48 @@ export default function ExpenseModal({
         expenseDate: editing.expenseDate,
       });
       setInputCurrency(tripCurrency);
+      // Load existing photo preview
+      if (editing.photoUrl) {
+        setPhotoPreview(editing.photoUrl);
+        setPhotoFile(null);
+      } else {
+        setPhotoPreview(null);
+        setPhotoFile(null);
+      }
     } else {
       setRawAmount('');
-      // FIX: reset to the selected day, not today
       reset({
         amount: '', category: 'food', description: '', notes: '',
         expenseDate: resolvedDefault,
       });
       setInputCurrency(tripCurrency);
+      setPhotoPreview(null);
+      setPhotoFile(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing, open, resolvedDefault]);
 
+  // ── Photo handlers ─────────────────────────────────────────────────────────
+  const handlePhotoFile = (file: File) => {
+    setPhotoFile(file);
+    const reader = new FileReader();
+    reader.onload = e => setPhotoPreview(e.target?.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handlePhotoFile(file);
+    // Reset input so same file can be re-selected
+    e.target.value = '';
+  };
+
+  const clearPhoto = () => {
+    setPhotoFile(null);
+    setPhotoPreview(null);
+  };
+
+  // ── Amount helpers ─────────────────────────────────────────────────────────
   const formatWithCommas = (val: string) => {
     const clean = val.replace(/[^0-9.]/g, '');
     const [int, dec] = clean.split('.');
@@ -119,28 +155,35 @@ export default function ExpenseModal({
     setValue('amount', raw, { shouldValidate: true });
   };
 
-  const isConverting = inputCurrency !== tripCurrency;
-  const numAmount = parseFloat(rawAmount) || 0;
-
+  const isConverting  = inputCurrency !== tripCurrency;
+  const numAmount     = parseFloat(rawAmount) || 0;
   const convertedAmount = isConverting && rates && numAmount > 0
     ? convert(numAmount, inputCurrency, tripCurrency, rates)
     : null;
-
   const rateInfo = isConverting && rates
     ? `1 ${inputCurrency} = ${fmtCurrency(convert(1, inputCurrency, tripCurrency, rates), tripCurrency)}`
     : null;
+
+  const info     = CURRENCY_INFO[inputCurrency];
+  const tripInfo = CURRENCY_INFO[tripCurrency];
 
   const submit = async (values: FormValues) => {
     const num = parseFloat(values.amount.replace(/,/g, ''));
     const finalAmount = isConverting && rates
       ? convert(num, inputCurrency, tripCurrency, rates)
       : num;
-    await onSubmit({ ...values, amount: String(Math.round(finalAmount)) } as ExpenseFormData);
+
+    const formData: ExpenseFormData = {
+      ...values,
+      amount: String(Math.round(finalAmount)),
+      // Pass the file if a new one was chosen, otherwise pass the existing URL
+      photoFile: photoFile ?? undefined,
+      photoUrl:  !photoFile ? (photoPreview ?? undefined) : undefined,
+    };
+
+    await onSubmit(formData);
     onClose();
   };
-
-  const info = CURRENCY_INFO[inputCurrency];
-  const tripInfo = CURRENCY_INFO[tripCurrency];
 
   return (
     <AnimatePresence>
@@ -177,17 +220,15 @@ export default function ExpenseModal({
 
             <div className="max-h-[84vh] overflow-y-auto px-5 pb-10 no-scrollbar">
 
-              {/* ── AMOUNT SECTION ─────────────────────────────────── */}
+              {/* ── AMOUNT ───────────────────────────────────────────── */}
               <div className="mb-5">
                 <label className="mb-2 block text-xs font-semibold text-slate-500 uppercase tracking-wide">
                   Amount
                 </label>
 
-                {/* Amount input row */}
                 <div className={`flex items-center gap-0 overflow-hidden rounded-2xl border-2 transition-colors ${
                   isConverting ? 'border-pink-300 bg-pink-50/30' : 'border-violet-300 bg-violet-50/30'
                 }`}>
-                  {/* Currency selector button */}
                   <button
                     type="button"
                     onClick={() => setShowCurrencyPicker(v => !v)}
@@ -202,7 +243,6 @@ export default function ExpenseModal({
                     <ChevronDown size={13} className={`transition-transform ${showCurrencyPicker ? 'rotate-180' : ''}`} />
                   </button>
 
-                  {/* Number input */}
                   <Controller
                     control={control}
                     name="amount"
@@ -221,7 +261,7 @@ export default function ExpenseModal({
                   <p className="mt-1 text-[11px] text-rose-500">{errors.amount.message}</p>
                 )}
 
-                {/* Currency picker dropdown */}
+                {/* Currency picker */}
                 <AnimatePresence>
                   {showCurrencyPicker && (
                     <motion.div
@@ -280,15 +320,12 @@ export default function ExpenseModal({
                       className="mt-3 overflow-hidden rounded-2xl bg-gradient-to-r from-violet-500 to-pink-500 p-[1.5px]"
                     >
                       <div className="flex items-center justify-between rounded-2xl bg-white px-4 py-3">
-                        {/* left: input */}
                         <div className="text-center">
                           <p className="text-[10px] text-slate-400">You pay</p>
                           <p className="text-base font-bold text-pink-600">
                             {info.flag} {formatWithCommas(rawAmount)} {inputCurrency}
                           </p>
                         </div>
-
-                        {/* arrow */}
                         <div className="flex flex-col items-center gap-0.5">
                           <ArrowRight size={16} className="text-violet-400" />
                           {loadingRates ? (
@@ -297,8 +334,6 @@ export default function ExpenseModal({
                             <p className="text-[9px] text-slate-400">{rateInfo}</p>
                           )}
                         </div>
-
-                        {/* right: converted */}
                         <div className="text-center">
                           <p className="text-[10px] text-slate-400">Budget deducted</p>
                           <p className="text-base font-bold text-violet-700">
@@ -310,7 +345,6 @@ export default function ExpenseModal({
                   )}
                 </AnimatePresence>
 
-                {/* Hint when no conversion */}
                 {!isConverting && (
                   <p className="mt-1.5 text-[11px] text-slate-400">
                     Paying in a different currency?{' '}
@@ -322,7 +356,7 @@ export default function ExpenseModal({
                 )}
               </div>
 
-              {/* ── CATEGORY ───────────────────────────────────────── */}
+              {/* ── CATEGORY ─────────────────────────────────────────── */}
               <div className="mb-4">
                 <label className="mb-2 block text-xs font-semibold text-slate-500 uppercase tracking-wide">
                   Category
@@ -340,7 +374,7 @@ export default function ExpenseModal({
                 />
               </div>
 
-              {/* ── DESCRIPTION ────────────────────────────────────── */}
+              {/* ── DESCRIPTION ──────────────────────────────────────── */}
               <div className="mb-4">
                 <label className="mb-1.5 block text-xs font-semibold text-slate-500 uppercase tracking-wide">
                   Description
@@ -358,7 +392,7 @@ export default function ExpenseModal({
                 )}
               </div>
 
-              {/* ── DATE ───────────────────────────────────────────── */}
+              {/* ── DATE ─────────────────────────────────────────────── */}
               <div className="mb-4">
                 <label className="mb-1.5 block text-xs font-semibold text-slate-500 uppercase tracking-wide">
                   Date
@@ -372,8 +406,8 @@ export default function ExpenseModal({
                 />
               </div>
 
-              {/* ── NOTES ──────────────────────────────────────────── */}
-              <div className="mb-6">
+              {/* ── NOTES ────────────────────────────────────────────── */}
+              <div className="mb-4">
                 <label className="mb-1.5 block text-xs font-semibold text-slate-500 uppercase tracking-wide">
                   Notes <span className="font-normal normal-case text-slate-400">(optional)</span>
                 </label>
@@ -386,7 +420,99 @@ export default function ExpenseModal({
                 />
               </div>
 
-              {/* ── SUBMIT ─────────────────────────────────────────── */}
+              {/* ── PHOTO (optional) ─────────────────────────────────── */}
+              <div className="mb-6">
+                <label className="mb-1.5 block text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  Receipt photo <span className="font-normal normal-case text-slate-400">(optional)</span>
+                </label>
+
+                {/* Hidden file inputs */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
+                <input
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
+
+                {photoPreview ? (
+                  /* Preview with remove button */
+                  <div className="relative overflow-hidden rounded-2xl border border-slate-200">
+                    <img
+                      src={photoPreview}
+                      alt="Receipt preview"
+                      className="h-44 w-full object-cover"
+                    />
+                    {/* Overlay actions */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
+                    <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-3 pb-3">
+                      <span className="text-[11px] font-medium text-white/80">
+                        {photoFile ? photoFile.name : 'Current photo'}
+                      </span>
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="flex h-7 items-center gap-1 rounded-xl bg-white/20 px-2.5 text-[11px] font-semibold text-white backdrop-blur-sm hover:bg-white/30 transition-colors"
+                        >
+                          <ImagePlus size={11} />
+                          Change
+                        </button>
+                        <button
+                          type="button"
+                          onClick={clearPhoto}
+                          className="flex h-7 w-7 items-center justify-center rounded-xl bg-rose-500/80 text-white backdrop-blur-sm hover:bg-rose-500 transition-colors"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  /* Empty state — pick or shoot */
+                  <div className="flex gap-2.5">
+                    {/* Upload from gallery */}
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex flex-1 flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 py-5 transition-colors hover:border-violet-300 hover:bg-violet-50/40"
+                    >
+                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-100 text-violet-500">
+                        <ImagePlus size={18} />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-[12px] font-semibold text-slate-600">Upload photo</p>
+                        <p className="text-[10px] text-slate-400">From gallery</p>
+                      </div>
+                    </button>
+
+                    {/* Take photo */}
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="flex flex-1 flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 py-5 transition-colors hover:border-violet-300 hover:bg-violet-50/40"
+                    >
+                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-100 text-violet-500">
+                        <Camera size={18} />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-[12px] font-semibold text-slate-600">Take photo</p>
+                        <p className="text-[10px] text-slate-400">Use camera</p>
+                      </div>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* ── SUBMIT ───────────────────────────────────────────── */}
               <motion.button
                 whileTap={{ scale: 0.97 }}
                 type="button"

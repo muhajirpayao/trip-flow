@@ -19,17 +19,19 @@ interface Props {
   currency: Currency;
   onAdd: () => void;
   onEdit: (e: Expense) => void;
-  onDelete: (id: string) => void;
+  onDelete: (id: string, photoUrl?: string) => void;
+  onDownload: (photoUrl: string, description: string) => void;
+  onView: (e: Expense) => void;
 }
 
 export default function ExpenseList({
-  expenses, currency, onAdd, onEdit, onDelete,
+  expenses, currency, onAdd, onEdit, onDelete, onDownload, onView,
 }: Props) {
-  const [search, setSearch]           = useState('');
-  const [filterCat, setFilterCat]     = useState<ExpenseCategory | null>(null);
-  const [showFilter, setShowFilter]   = useState(false);
-  const [minAmt, setMinAmt]           = useState('');
-  const [maxAmt, setMaxAmt]           = useState('');
+  const [search, setSearch]         = useState('');
+  const [filterCat, setFilterCat]   = useState<ExpenseCategory | null>(null);
+  const [showFilter, setShowFilter] = useState(false);
+  const [minAmt, setMinAmt]         = useState('');
+  const [maxAmt, setMaxAmt]         = useState('');
 
   const filtered = useMemo(() => {
     return expenses.filter(e => {
@@ -54,7 +56,7 @@ export default function ExpenseList({
 
   return (
     <div>
-      {/* search bar */}
+      {/* Search bar */}
       <div className="mb-3 flex gap-2">
         <div className="relative flex-1">
           <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -85,7 +87,7 @@ export default function ExpenseList({
         )}
       </div>
 
-      {/* filter panel */}
+      {/* Filter panel */}
       <AnimatePresence>
         {showFilter && (
           <motion.div
@@ -135,7 +137,7 @@ export default function ExpenseList({
         )}
       </AnimatePresence>
 
-      {/* results count */}
+      {/* Count */}
       {expenses.length > 0 && (
         <div className="mb-2 flex items-center justify-between">
           <p className="text-xs font-semibold text-slate-500">
@@ -144,7 +146,7 @@ export default function ExpenseList({
         </div>
       )}
 
-      {/* list */}
+      {/* List */}
       {expenses.length === 0 ? (
         <EmptyExpenses onAdd={onAdd} />
       ) : filtered.length === 0 ? (
@@ -161,6 +163,8 @@ export default function ExpenseList({
                 currency={currency}
                 onEdit={onEdit}
                 onDelete={onDelete}
+                onDownload={onDownload}
+                onView={onView}
               />
             ))}
           </AnimatePresence>
