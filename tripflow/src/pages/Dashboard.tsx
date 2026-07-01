@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef,  } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { motion, AnimatePresence, } from 'framer-motion';
+import jsPDF from 'jspdf';
 import { useTrip } from '../context/TripContext';
 import type { Trip } from '../types';
 import OnboardingWizard from '../components/onboarding/OnboardingWizard';
@@ -32,7 +33,12 @@ interface TripDocument {
 interface TripActivity {
   id: string;
   trip_id: string;
+  day_id?: string;
   title: string;
+  location?: string;
+  type?: string;
+  notes?: string;
+  status?: string;
   completed?: boolean;
   date?: string;
   created_at?: string;
@@ -226,18 +232,41 @@ function useDocuments(tripId: string | undefined) {
 // ── useActivities ─────────────────────────────────────────────────────────────
 function useActivities(tripId: string | undefined) {
   const [activities, setActivities] = useState<TripActivity[]>([]);
+  const [days, setDays] = useState<{ id: string; date: string }[]>([]);
   const [loading, setLoading] = useState(false);
+
   useEffect(() => {
     if (!tripId) return;
     setLoading(true);
-    supabase.from('itinerary_activities').select('*').eq('trip_id', tripId)
-      .then(({ data, error }) => {
-        if (error) console.error('Activities fetch error:', error);
-        setActivities(data ?? []);
-        setLoading(false);
+    Promise.all([
+      supabase.from('itinerary_activities').select('*').eq('trip_id', tripId).order('sort_order', { ascending: true }),
+      supabase.from('itinerary_days').select('id, date').eq('trip_id', tripId).order('date', { ascending: true }),
+    ]).then(([actsRes, daysRes]) => {
+      if (actsRes.error) console.error('Activities fetch error:', actsRes.error);
+      if (daysRes.error) console.error('Days fetch error:', daysRes.error);
+      const dayMap = new Map((daysRes.data ?? []).map((d: any) => [d.id, d.date]));
+      // Match the Itinerary page's rule: any day that has already passed counts
+      // as completed even if the activity's `status` was never explicitly set,
+      // since users don't usually go back and manually mark old days done.
+      const now = new Date();
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const merged: TripActivity[] = (actsRes.data ?? []).map((a: any) => {
+        const activityDate = dayMap.get(a.day_id) ?? a.date;
+        const statusLower = (a.status ?? '').toLowerCase();
+        const isPastDay = activityDate ? String(activityDate).slice(0, 10) < todayStr : false;
+        return {
+          ...a,
+          date: activityDate,
+          completed: isPastDay || statusLower === 'completed' || statusLower === 'done',
+        };
       });
+      setActivities(merged);
+      setDays(daysRes.data ?? []);
+      setLoading(false);
+    });
   }, [tripId]);
-  return { activities, loading };
+
+  return { activities, days, loading };
 }
 
 // ── useTripSpending ───────────────────────────────────────────────────────────
@@ -302,8 +331,25 @@ function useTripPhotos(tripId: string | undefined) {
   useEffect(() => {
     if (!tripId) return;
     setLoading(true);
-    supabase.from('trip_photos').select('*').eq('trip_id', tripId).order('created_at', { ascending: false })
-      .then(({ data }) => { setPhotos(data ?? []); setLoading(false); });
+
+    Promise.all([
+      supabase.from('trip_photos').select('*').eq('trip_id', tripId).order('created_at', { ascending: false }),
+      supabase.from('expenses').select('id, photo_url, description, created_at').eq('trip_id', tripId).not('photo_url', 'is', null),
+    ]).then(([photosRes, expensesRes]) => {
+      const uploaded: TripPhoto[] = photosRes.data ?? [];
+      const receipts: TripPhoto[] = (expensesRes.data ?? []).map(e => ({
+        id: `receipt-${e.id}`,
+        trip_id: tripId,
+        file_url: e.photo_url as string,
+        caption: e.description ? `Receipt: ${e.description}` : 'Receipt',
+        created_at: e.created_at,
+      }));
+      const merged = [...uploaded, ...receipts].sort((a, b) =>
+        new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()
+      );
+      setPhotos(merged);
+      setLoading(false);
+    });
   }, [tripId]);
 
   const addPhoto = async (file: File, tripId: string, userId: string, caption?: string) => {
@@ -319,17 +365,225 @@ function useTripPhotos(tripId: string | undefined) {
   return { photos, loading, addPhoto };
 }
 
+// ── useTripExpenseDetails ─────────────────────────────────────────────────────
+interface StoryExpense {
+  id: string;
+  description: string;
+  amount: number;
+  currency: string;
+  category: string;
+  photo_url?: string;
+  expense_date: string;
+}
+
+function useTripExpenseDetails(tripId: string | undefined) {
+  const [expenses, setExpenses] = useState<StoryExpense[]>([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (!tripId) return;
+    setLoading(true);
+    supabase.from('expenses')
+      .select('id, description, amount, currency, category, photo_url, expense_date')
+      .eq('trip_id', tripId)
+      .order('expense_date', { ascending: true })
+      .then(({ data, error }) => {
+        if (error) console.error('Expense details fetch error:', error);
+        setExpenses((data ?? []) as StoryExpense[]);
+        setLoading(false);
+      });
+  }, [tripId]);
+  return { expenses, loading };
+}
+
+// ── Travel Story Modal ────────────────────────────────────────────────────────
+function buildStoryDays(
+  days: { id: string; date: string }[],
+  activities: TripActivity[],
+  expenses: StoryExpense[],
+  photos: TripPhoto[]
+) {
+  const dateKey = (d?: string) => (d ? d.slice(0, 10) : '');
+  return days
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(day => ({
+      id: day.id,
+      date: day.date,
+      activities: activities.filter(a => a.day_id === day.id),
+      expenses: expenses.filter(e => dateKey(e.expense_date) === dateKey(day.date)),
+      photos: photos.filter(p => dateKey(p.created_at) === dateKey(day.date)),
+    }));
+}
+
+function TravelStoryModal({ trip, days, activities, expenses, photos, onClose }: {
+  trip: Trip;
+  days: { id: string; date: string }[];
+  activities: TripActivity[];
+  expenses: StoryExpense[];
+  photos: TripPhoto[];
+  onClose: () => void;
+}) {
+  const storyDays = buildStoryDays(days, activities, expenses, photos);
+  const dateKey = (d?: string) => (d ? d.slice(0, 10) : '');
+  const usedDayKeys = new Set(days.map(d => dateKey(d.date)));
+  const looseExpenses = expenses.filter(e => !usedDayKeys.has(dateKey(e.expense_date)));
+  const loosePhotos = photos.filter(p => !usedDayKeys.has(dateKey(p.created_at)));
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div
+        className="w-full sm:max-w-2xl bg-gradient-to-b from-slate-50 to-white rounded-t-3xl sm:rounded-3xl max-h-[92vh] overflow-y-auto"
+        initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+        transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="sticky top-0 z-10 bg-white/90 backdrop-blur-sm px-5 pt-5 pb-4 border-b border-slate-100 flex items-center justify-between">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-violet-500">Your Travel Story</p>
+            <h2 className="text-lg font-black text-slate-900">{trip.destination}</h2>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 flex items-center justify-center rounded-full bg-slate-100 text-slate-500">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="px-5 py-6 space-y-8">
+          {storyDays.length === 0 && (
+            <div className="text-center py-10 text-slate-400">
+              <div className="text-3xl mb-2">🗒️</div>
+              <p className="text-sm font-semibold">No day-by-day itinerary recorded</p>
+            </div>
+          )}
+
+          {storyDays.map((day, i) => {
+            const dayTotal = day.expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+            return (
+              <motion.div
+                key={day.id}
+                initial={{ opacity: 0, y: 24 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: '-60px' }}
+                transition={{ duration: 0.5 }}
+              >
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-white font-black text-sm flex-shrink-0"
+                    style={{ background: 'linear-gradient(135deg, #7C5CFF, #EC4899)' }}>
+                    {i + 1}
+                  </div>
+                  <div>
+                    <p className="text-sm font-black text-slate-900">Day {i + 1}</p>
+                    <p className="text-xs text-slate-400">{fmtDate(day.date)}</p>
+                  </div>
+                  {dayTotal > 0 && (
+                    <span className="ml-auto text-xs font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">
+                      {fmtCurrency(dayTotal, trip.currency)}
+                    </span>
+                  )}
+                </div>
+
+                <div className="pl-5 border-l-2 border-violet-100 ml-5 space-y-3">
+                  {day.activities.length === 0 && day.expenses.length === 0 && day.photos.length === 0 && (
+                    <p className="text-xs text-slate-400 italic pl-3">Nothing recorded for this day.</p>
+                  )}
+
+                  {day.activities.map((a, ai) => (
+                    <motion.div
+                      key={a.id}
+                      initial={{ opacity: 0, x: -10 }}
+                      whileInView={{ opacity: 1, x: 0 }}
+                      viewport={{ once: true }}
+                      transition={{ delay: 0.05 * ai }}
+                      className="pl-3 flex items-start gap-2"
+                    >
+                      {a.completed ? <CheckCircle2 size={14} className="text-emerald-500 mt-0.5 flex-shrink-0" /> : <Circle size={14} className="text-slate-300 mt-0.5 flex-shrink-0" />}
+                      <div className="min-w-0">
+                        <p className={`text-sm font-bold truncate ${a.completed ? 'text-slate-600' : 'text-slate-800'}`}>{a.title}</p>
+                        {a.location && <p className="text-xs text-slate-400 truncate">📍 {a.location}</p>}
+                      </div>
+                    </motion.div>
+                  ))}
+
+                  {day.expenses.map((e, ei) => (
+                    <motion.div
+                      key={e.id}
+                      initial={{ opacity: 0, x: -10 }}
+                      whileInView={{ opacity: 1, x: 0 }}
+                      viewport={{ once: true }}
+                      transition={{ delay: 0.05 * (day.activities.length + ei) }}
+                      className="pl-3 flex items-center gap-2"
+                    >
+                      <Wallet size={14} className="text-amber-500 flex-shrink-0" />
+                      <p className="text-sm text-slate-600 truncate">
+                        {e.description || e.category} — <span className="font-semibold">{fmtCurrency(Number(e.amount) || 0, e.currency || trip.currency)}</span>
+                      </p>
+                    </motion.div>
+                  ))}
+
+                  {day.photos.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      whileInView={{ opacity: 1 }}
+                      viewport={{ once: true }}
+                      className="pl-3 flex gap-2 overflow-x-auto pb-1 pt-1"
+                    >
+                      {day.photos.map(p => (
+                        <img key={p.id} src={p.file_url} alt={p.caption ?? ''} className="w-16 h-16 rounded-xl object-cover flex-shrink-0 border border-slate-100" />
+                      ))}
+                    </motion.div>
+                  )}
+                </div>
+              </motion.div>
+            );
+          })}
+
+          {(looseExpenses.length > 0 || loosePhotos.length > 0) && (
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              className="pt-4 border-t border-slate-100"
+            >
+              <p className="text-sm font-black text-slate-900 mb-3">More Memories</p>
+              {loosePhotos.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto pb-2">
+                  {loosePhotos.map(p => (
+                    <img key={p.id} src={p.file_url} alt={p.caption ?? ''} className="w-20 h-20 rounded-xl object-cover flex-shrink-0" />
+                  ))}
+                </div>
+              )}
+              {looseExpenses.length > 0 && (
+                <div className="space-y-1.5 mt-2">
+                  {looseExpenses.map(e => (
+                    <div key={e.id} className="flex items-center gap-2 text-sm text-slate-600">
+                      <Wallet size={13} className="text-amber-500 flex-shrink-0" />
+                      {e.description || e.category} — <span className="font-semibold">{fmtCurrency(Number(e.amount) || 0, e.currency || trip.currency)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
 // ── Completed Dashboard ───────────────────────────────────────────────────────
 interface CompletedDashboardProps {
   trip: Trip;
   unreadCount: number;
   activities: TripActivity[];
+  days: { id: string; date: string }[];
   docs: TripDocument[];
   spent: number;
   placesCount: number;
 }
 
-function CompletedDashboard({ trip, unreadCount, activities, docs, spent, placesCount }: CompletedDashboardProps) {
+function CompletedDashboard({ trip, unreadCount, activities, days, docs, spent, placesCount }: CompletedDashboardProps) {
   const navigate = useNavigate();
   const total = tripDays(trip.startDate, trip.endDate);
   const cityShort = trip.destination.split(',')[0];
@@ -342,6 +596,8 @@ function CompletedDashboard({ trip, unreadCount, activities, docs, spent, places
   const [savingJournal, setSavingJournal] = useState(false);
   const { journal, saveJournal } = useJournal(trip.id);
   const { photos, addPhoto } = useTripPhotos(trip.id);
+  const { expenses: expenseDetails } = useTripExpenseDetails(trip.id);
+  const [showStoryModal, setShowStoryModal] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -369,6 +625,92 @@ function CompletedDashboard({ trip, unreadCount, activities, docs, spent, places
     await addPhoto(file, trip.id!, user?.id ?? '');
   };
 
+  // ── PDF Export ─────────────────────────────────────────────────────────────
+  // jsPDF's built-in fonts only support WinAnsi encoding, so currency symbols
+  // like ₱, ₹, etc. render as garbled characters. Use the currency code instead.
+  const pdfCurrency = (amount: number, currency: string) =>
+    `${currency} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const handleExportPDF = () => {
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    let y = 20;
+
+    doc.setFontSize(22);
+    doc.setTextColor(124, 92, 255);
+    doc.text(trip.destination, pageWidth / 2, y, { align: 'center' });
+    y += 8;
+
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    doc.text(`${fmtDate(trip.startDate)} to ${fmtDate(trip.endDate)} - ${total} days`, pageWidth / 2, y, { align: 'center' });
+    y += 15;
+
+    doc.setDrawColor(220);
+    doc.line(15, y, pageWidth - 15, y);
+    y += 12;
+
+    doc.setFontSize(14);
+    doc.setTextColor(20);
+    doc.text('Trip Summary', 15, y);
+    y += 10;
+
+    const stats: [string, string][] = [
+      ['Traveler Name', trip.displayName || 'Traveler'],
+      ['Activities Completed', completedActivities.toString()],
+      ['Documents Stored', docs.length.toString()],
+      ['Total Spent', pdfCurrency(spent, trip.currency)],
+      ['Days Traveled', total.toString()],
+    ];
+
+    doc.setFontSize(11);
+    stats.forEach(([label, value]) => {
+      doc.setTextColor(120);
+      doc.text(label, 15, y);
+      doc.setTextColor(20);
+      doc.text(value, pageWidth - 15, y, { align: 'right' });
+      y += 8;
+    });
+
+    y += 8;
+    doc.setDrawColor(220);
+    doc.line(15, y, pageWidth - 15, y);
+    y += 12;
+
+    if (journal?.content) {
+      doc.setFontSize(14);
+      doc.setTextColor(20);
+      doc.text('Travel Journal', 15, y);
+      y += 8;
+      doc.setFontSize(10);
+      doc.setTextColor(80);
+      const lines = doc.splitTextToSize(journal.content, pageWidth - 30);
+      doc.text(lines, 15, y);
+      y += lines.length * 5 + 10;
+    }
+
+    if (activities.length > 0) {
+      if (y > 250) { doc.addPage(); y = 20; }
+      doc.setFontSize(14);
+      doc.setTextColor(20);
+      doc.text('Itinerary', 15, y);
+      y += 8;
+      doc.setFontSize(10);
+      activities.forEach(a => {
+        if (y > 280) { doc.addPage(); y = 20; }
+        if (a.completed) doc.setTextColor(34, 197, 94);
+        else doc.setTextColor(150);
+        doc.text(a.completed ? 'DONE' : 'PLANNED', 15, y);
+        doc.setTextColor(40);
+        doc.text(a.title, 40, y);
+        if (a.date) doc.text(fmtShort(a.date), pageWidth - 15, y, { align: 'right' });
+        y += 7;
+      });
+    }
+
+    doc.save(`${trip.destination.replace(/[,\s]+/g, '_')}_trip_summary.pdf`);
+  };
+
   const confettiColors = ['#7C5CFF', '#C7E9FF', '#FFB7E1', '#86efac', '#fde68a', '#f9a8d4'];
   const confettiParticles = Array.from({ length: 30 }, (_, i) => ({
     id: i,
@@ -378,8 +720,8 @@ function CompletedDashboard({ trip, unreadCount, activities, docs, spent, places
   }));
 
   const memoryActions = [
-    { icon: BookOpen,  label: 'View Travel Story', color: 'bg-violet-50 text-violet-600', action: () => navigate('/dashboard/itinerary') },
-    { icon: Download,  label: 'Export Trip PDF',   color: 'bg-blue-50 text-blue-600',    action: () => {} },
+    { icon: BookOpen,  label: 'View Travel Story', color: 'bg-violet-50 text-violet-600', action: () => setShowStoryModal(true) },
+    { icon: Download,  label: 'Export Trip PDF',   color: 'bg-blue-50 text-blue-600',    action: handleExportPDF },
     { icon: Camera,    label: 'Add Travel Photos', color: 'bg-rose-50 text-rose-500',    action: () => photoInputRef.current?.click() },
     { icon: PenLine,   label: 'Write Journal',     color: 'bg-amber-50 text-amber-600',  action: () => { setJournalDraft(journal?.content ?? ''); setShowJournalModal(true); } },
     { icon: Plane,     label: 'Plan New Trip',     color: 'bg-emerald-50 text-emerald-600', action: () => navigate('/dashboard/home') },
@@ -451,7 +793,6 @@ function CompletedDashboard({ trip, unreadCount, activities, docs, spent, places
           className="relative overflow-hidden rounded-3xl shadow-[0_8px_32px_rgba(124,92,255,0.18)]"
           style={{ background: 'linear-gradient(135deg, #7C5CFF 0%, #EC4899 60%, #F59E0B 100%)' }}
         >
-          {/* Glassmorphism inner glow */}
           <div className="absolute inset-0 opacity-30"
             style={{ background: 'radial-gradient(circle at 30% 20%, rgba(255,255,255,0.4) 0%, transparent 60%)' }} />
           <div className="relative z-10 p-5 sm:p-6">
@@ -512,7 +853,6 @@ function CompletedDashboard({ trip, unreadCount, activities, docs, spent, places
               </motion.div>
             ))}
           </div>
-          {/* Days traveled full-width card */}
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.3 }}
@@ -792,6 +1132,18 @@ function CompletedDashboard({ trip, unreadCount, activities, docs, spent, places
           </motion.div>
         )}
       </AnimatePresence>
+      <AnimatePresence>
+        {showStoryModal && (
+          <TravelStoryModal
+            trip={trip}
+            days={days}
+            activities={activities}
+            expenses={expenseDetails}
+            photos={photos}
+            onClose={() => setShowStoryModal(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -845,7 +1197,7 @@ export default function Dashboard() {
   const hero    = useCachedPhoto(trip?.destination ?? '', liveHero);
 
   const { docs, loading: docsLoading, addDoc, removeDoc } = useDocuments(trip?.id);
-  const { activities, loading: activitiesLoading } = useActivities(trip?.id);
+  const { activities, days, loading: activitiesLoading } = useActivities(trip?.id);
   const completedActivities = activities.filter(a => a.completed).length;
   const { spent, loading: spentLoading } = useTripSpending(trip?.id);
   const placesCount = usePlaces(trip?.id);
@@ -888,6 +1240,7 @@ export default function Dashboard() {
         trip={trip}
         unreadCount={unreadCount}
         activities={activities}
+        days={days}
         docs={docs}
         spent={spent}
         placesCount={placesCount}
@@ -899,7 +1252,7 @@ export default function Dashboard() {
   const startTarget = new Date(`${trip.startDate}T00:00:00`);
   startTarget.setHours(0, 0, 0, 0);
 
-  const days  = Math.max(0, Math.round((startTarget.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
+  const daysUntilDeparture = Math.max(0, Math.round((startTarget.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
   const total = tripDays(trip.startDate, trip.endDate);
   const isTravelling = today >= startTarget && today <= endTarget;
   const tripEnded = today > endTarget;
@@ -1003,7 +1356,7 @@ export default function Dashboard() {
               {weather ? `It's ${(weather as any).description} in ${cityShort} ${(weather as any).emoji} — check your itinerary for today.` : `Planning your trip to ${trip.destination}.`}
             </p>
             <p className="text-violet-200 text-xs">
-              {isTravelling ? `You're currently in ${cityShort}! 🌍` : tripEnded ? `Your trip to ${cityShort} has ended 🏁` : days === 0 ? 'Your adventure starts today! 🎉' : days === 1 ? 'Tomorrow is departure day! ✈️' : `${days} days to departure`}
+              {isTravelling ? `You're currently in ${cityShort}! 🌍` : tripEnded ? `Your trip to ${cityShort} has ended 🏁` : daysUntilDeparture === 0 ? 'Your adventure starts today! 🎉' : daysUntilDeparture === 1 ? 'Tomorrow is departure day! ✈️' : `${daysUntilDeparture} days to departure`}
             </p>
           </div>
           <div className="flex-shrink-0"><HeaderIcons unreadCount={unreadCount} /></div>
@@ -1016,7 +1369,7 @@ export default function Dashboard() {
         <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.2 }}
           className="bg-white rounded-3xl p-4 sm:p-5 shadow-[0_4px_24px_rgba(124,92,255,0.10)] flex items-center gap-3 sm:gap-4">
           <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex flex-col items-center justify-center text-white flex-shrink-0" style={{ background: 'linear-gradient(135deg, #C7E9FF, #7C5CFF)' }}>
-            {isTravelling ? (<><span className="text-xl sm:text-2xl font-black leading-none">✈</span><span className="text-[10px] font-semibold opacity-80">live</span></>) : tripEnded ? (<><span className="text-xl sm:text-2xl font-black leading-none">🏁</span><span className="text-[10px] font-semibold opacity-80">done</span></>) : (<><span className="text-xl sm:text-2xl font-black leading-none">{days}</span><span className="text-[10px] font-semibold opacity-80">days</span></>)}
+            {isTravelling ? (<><span className="text-xl sm:text-2xl font-black leading-none">✈</span><span className="text-[10px] font-semibold opacity-80">live</span></>) : tripEnded ? (<><span className="text-xl sm:text-2xl font-black leading-none">🏁</span><span className="text-[10px] font-semibold opacity-80">done</span></>) : (<><span className="text-xl sm:text-2xl font-black leading-none">{daysUntilDeparture}</span><span className="text-[10px] font-semibold opacity-80">days</span></>)}
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-0.5">{isTravelling ? 'Currently travelling' : tripEnded ? 'Trip completed' : 'Departure countdown'}</p>
@@ -1106,7 +1459,7 @@ export default function Dashboard() {
               <div className="bg-white rounded-2xl p-3.5 sm:p-4 shadow-[0_2px_12px_rgba(0,0,0,0.05)] flex items-center gap-3 sm:gap-4 border-l-4 border-violet-400">
                 <div className="text-center min-w-[40px] flex-shrink-0"><p className="text-[10px] font-bold text-slate-400 uppercase">{departureBadge.month}</p><p className="text-lg font-black text-slate-900 leading-none">{departureBadge.day}</p></div>
                 <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'linear-gradient(135deg, #C7E9FF, #7C5CFF)' }}><Plane size={16} className="text-white" /></div>
-                <div className="flex-1 min-w-0"><p className="text-sm font-bold text-slate-900 truncate">Flight to {cityShort}</p><p className="text-xs text-slate-400 truncate">{days === 0 ? 'Departing today!' : days === 1 ? 'Departing tomorrow!' : `Departing in ${days} days`}</p></div>
+                <div className="flex-1 min-w-0"><p className="text-sm font-bold text-slate-900 truncate">Flight to {cityShort}</p><p className="text-xs text-slate-400 truncate">{daysUntilDeparture === 0 ? 'Departing today!' : daysUntilDeparture === 1 ? 'Departing tomorrow!' : `Departing in ${daysUntilDeparture} days`}</p></div>
                 <ArrowRight size={14} className="text-slate-300 flex-shrink-0" />
               </div>
             )}
