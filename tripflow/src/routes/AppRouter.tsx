@@ -12,7 +12,7 @@ import AdminDashboard from '../pages/admin/AdminDashboard';
 import AdminAccessScreen from '../components/admin/AdminAccessScreen';
 import AdminRouteGuard from './AdminRouteGuard';
 import AdminNotificationsPage from '../pages/admin/AdminNotifications';
-
+import Gallery from "../pages/Gallery";
 const AuthPage = lazy(() => import('../pages/AuthPage'));
 const Home = lazy(() => import('../pages/Home'));
 const Dashboard = lazy(() => import('../pages/Dashboard'));
@@ -99,6 +99,7 @@ const router = UNDER_DEVELOPMENT
           { path: 'profile',           element: <Profile /> },
           { path: 'settings',          element: <Settings /> },
           { path: 'notifications',     element: <NotificationsPage /> },
+          {path: 'gallery', element: <Gallery/>},
         ],
       },
 

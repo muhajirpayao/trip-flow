@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LayoutDashboard, Calendar, Wallet, MapPin, Home as HomeIcon, User, History, LogOut } from 'lucide-react';
+import { LayoutDashboard, Calendar, Wallet, MapPin, Home as HomeIcon, User, History, LogOut, Image } from 'lucide-react';
 import { NotificationBell } from '../components/notifications/NotificationBell';
 import { useNotifications } from '../hooks/useNotifications';
 import { useAuth } from '../context/AuthContext';
@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { to: '/dashboard/itinerary', icon: Calendar,        label: 'Itinerary' },
   { to: '/dashboard/expenses',  icon: Wallet,          label: 'Expenses'  },
   { to: '/dashboard/home',      icon: HomeIcon,        label: 'Home'      },
+  { to: '/dashboard/gallery',   icon: Image,           label: 'Gallery'   },
   { to: '/dashboard/places',    icon: MapPin,          label: 'Places'    },
   { to: '/dashboard/trip',      icon: LayoutDashboard, label: 'Dashboard' },
 ];
