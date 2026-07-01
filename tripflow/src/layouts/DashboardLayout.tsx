@@ -53,10 +53,10 @@ export function ProfileMenu() {
     <div className="relative">
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-9 h-9 rounded-full flex items-center justify-center bg-white/20 border-2 border-white/30"
+        className="w-9 h-9 rounded-full flex items-center justify-center bg-violet-100 border-2 border-violet-200"
         aria-label="Profile menu"
       >
-        <User size={17} className="text-white" strokeWidth={2} />
+        <User size={17} className="text-violet-600" strokeWidth={2} />
       </button>
 
       <AnimatePresence>
@@ -105,7 +105,7 @@ export function ProfileMenu() {
 export function HeaderIcons({ unreadCount }: { unreadCount: number }) {
   return (
     <div className="flex items-center gap-2">
-      <div className="relative w-9 h-9 rounded-full bg-white/20 border-2 border-white/30 flex items-center justify-center">
+      <div className="relative w-9 h-9 rounded-full bg-violet-100 border-2 border-violet-200 flex items-center justify-center">
         <NotificationBell unreadCount={unreadCount} />
       </div>
       <ProfileMenu />
